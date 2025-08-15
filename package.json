@@ -1,0 +1,38 @@
+{
+  "name": "protocol-translation-layer",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "tsx tests/test-full-integration.ts",
+    "test:cache": "tsx tests/test-cache-manager.ts",
+    "test:stats": "tsx tests/statistical-analysis.ts",
+    "test:validate": "tsx tests/validate-paper-results.ts",
+    "build": "tsc",
+    "dev": "tsx --watch src/index.ts",
+    "demo": "tsx src/index.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/express": "^5.0.3",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^24.3.0",
+    "@types/ws": "^8.18.1",
+    "jest": "^30.0.5",
+    "nodemon": "^3.1.10",
+    "ts-jest": "^29.4.1",
+    "tsx": "^4.20.4",
+    "typescript": "^5.9.2"
+  },
+  "dependencies": {
+    "events": "^3.3.0",
+    "express": "^5.1.0",
+    "ioredis": "^5.7.0",
+    "p-queue": "^8.1.0",
+    "pino": "^9.9.0",
+    "ws": "^8.18.3",
+    "zod": "^4.0.17"
+  }
+}

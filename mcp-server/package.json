@@ -1,0 +1,26 @@
+{
+  "name": "mcp-a2a-translator",
+  "version": "1.0.0",
+  "description": "MCP server for protocol translation layer - enables Claude Desktop to communicate with Google A2A agents",
+  "type": "module",
+  "main": "index.js",
+  "bin": {
+    "mcp-a2a-translator": "./index.js"
+  },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^0.6.0"
+  },
+  "author": "Deo Shankar",
+  "license": "MIT",
+  "keywords": [
+    "mcp",
+    "a2a",
+    "protocol",
+    "translation",
+    "claude",
+    "gemini"
+  ]
+}
