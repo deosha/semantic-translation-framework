@@ -12,8 +12,6 @@ import {
   SemanticIntent,
   ProtocolMessage,
   ProtocolParadigm,
-  ToolDefinition,
-  TaskDefinition,
   ToolInvocationRequest,
   TaskRequest
 } from '../types/protocols';
@@ -37,19 +35,74 @@ export class SemanticMapper {
     message: ProtocolMessage,
     context?: SemanticTranslationContext
   ): SemanticIntent {
-    switch (message.paradigm) {
-      case ProtocolParadigm.TOOL_CENTRIC:
-        return this.extractToolCentricIntent(message);
+    try {
+      // Validate input message
+      if (!message || !message.payload) {
+        throw new Error('Invalid message: missing payload');
+      }
       
-      case ProtocolParadigm.TASK_CENTRIC:
-        return this.extractTaskCentricIntent(message);
+      // Validate paradigm
+      if (!message.paradigm) {
+        console.warn('Message missing paradigm, inferring from structure');
+        message.paradigm = this.inferParadigm(message);
+      }
       
-      case ProtocolParadigm.FUNCTION_CALLING:
-        return this.extractFunctionCallingIntent(message);
+      // Extract based on paradigm
+      switch (message.paradigm) {
+        case ProtocolParadigm.TOOL_CENTRIC:
+          return this.extractToolCentricIntent(message);
+        
+        case ProtocolParadigm.TASK_CENTRIC:
+          return this.extractTaskCentricIntent(message);
+        
+        case ProtocolParadigm.FUNCTION_CALLING:
+          return this.extractFunctionCallingIntent(message);
+        
+        default:
+          console.warn(`Unknown paradigm: ${message.paradigm}, using generic extraction`);
+          return this.extractGenericIntent(message);
+      }
+    } catch (error) {
+      // Log error and return minimal valid intent
+      console.warn('Failed to extract semantic intent:', error);
       
-      default:
-        return this.extractGenericIntent(message);
+      return {
+        action: 'other' as const,
+        target: {
+          type: 'error',
+          identifier: message?.id || 'unknown',
+          description: `Failed to extract intent: ${error instanceof Error ? error.message : 'Unknown error'}`
+        },
+        parameters: message?.payload || {},
+        constraints: {},
+        context: {
+          session: context?.sessionId || message?.sessionId
+        }
+      };
     }
+  }
+  
+  /**
+   * Infer paradigm from message structure
+   */
+  private inferParadigm(message: any): ProtocolParadigm {
+    // Check for tool-centric structure
+    if (message.payload?.toolName || message.payload?.toolId) {
+      return ProtocolParadigm.TOOL_CENTRIC;
+    }
+    
+    // Check for task-centric structure
+    if (message.task || message.payload?.task) {
+      return ProtocolParadigm.TASK_CENTRIC;
+    }
+    
+    // Check for function-calling structure
+    if (message.function || message.payload?.function) {
+      return ProtocolParadigm.FUNCTION_CALLING;
+    }
+    
+    // Default to framework-specific
+    return ProtocolParadigm.FRAMEWORK_SPECIFIC;
   }
 
   /**
@@ -64,27 +117,17 @@ export class SemanticMapper {
     
     // Build task request
     const task: TaskRequest = {
-      version: '1.0',
-      messageId: this.generateMessageId(),
-      type: 'task_request',
-      task: {
+      id: this.generateMessageId(),
+      type: 'request',
+      paradigm: ProtocolParadigm.TASK_CENTRIC,
+      timestamp: Date.now(),
+      payload: {
         taskType: intent.target.identifier || toolRequest.payload.toolName,
-        description: intent.target.description,
         input: intent.parameters,
-        config: {
-          priority: 'normal',
-          timeout: toolRequest.payload.options?.timeout,
-          streaming: false // Tools typically don't stream
+        context: {
+          conversationId: context.sessionId,
+          sessionVariables: context.conversationContext?.variables
         }
-      },
-      context: {
-        sessionId: context.sessionId,
-        variables: context.conversationContext.variables
-      },
-      metadata: {
-        timestamp: Date.now(),
-        source: 'tool-centric-translation',
-        traceId: context.sessionId
       }
     };
 
@@ -107,23 +150,23 @@ export class SemanticMapper {
    */
   mapTaskToTool(
     taskRequest: TaskRequest,
-    context: SemanticTranslationContext
+    _context: SemanticTranslationContext
   ): { tool: ToolInvocationRequest; confidence: TranslationConfidence } {
     // Extract semantic intent
     const intent = this.extractTaskCentricIntent(taskRequest);
     
     // Build tool request
     const tool: ToolInvocationRequest = {
-      id: taskRequest.messageId || this.generateId(),
+      id: (taskRequest as any).messageId || this.generateId(),
       type: 'request',
       paradigm: ProtocolParadigm.TOOL_CENTRIC,
       timestamp: Date.now(),
       payload: {
-        toolId: intent.target.identifier || taskRequest.task.taskType,
-        toolName: taskRequest.task.taskType,
-        arguments: taskRequest.task.input,
+        toolId: intent.target.identifier || (taskRequest as any).task?.taskType,
+        toolName: (taskRequest as any).task?.taskType || intent.target.identifier || 'unknown',
+        arguments: (taskRequest as any).task?.input || {},
         options: {
-          timeout: taskRequest.task.config?.timeout,
+          timeout: (taskRequest as any).task?.config?.timeout,
           retries: 3
         }
       }
@@ -138,7 +181,7 @@ export class SemanticMapper {
     );
 
     // Note: Some task features will be lost (streaming, state)
-    if (taskRequest.task.config?.streaming) {
+    if ((taskRequest as any).task?.config?.streaming) {
       confidence.warnings.push('Streaming not supported in tool-centric paradigm');
       confidence.lossyTranslation = true;
     }
@@ -152,11 +195,11 @@ export class SemanticMapper {
   private calculateMappingConfidence(
     source: any,
     target: any,
-    intent: SemanticIntent,
+    _intent: SemanticIntent,
     direction: string
   ): TranslationConfidence {
     // Semantic similarity (40% weight)
-    const semanticMatch = this.calculateSemanticMatch(source, target, intent);
+    const semanticMatch = this.calculateSemanticMatch(source, target, _intent);
     
     // Structural alignment (20% weight)
     const structuralAlignment = this.calculateStructuralAlignment(source, target);
@@ -210,97 +253,153 @@ export class SemanticMapper {
    * Extract intent from tool-centric message
    */
   private extractToolCentricIntent(message: any): SemanticIntent {
-    const payload = message.payload || message;
-    
-    return {
-      action: 'execute',
-      target: {
-        type: 'tool',
-        identifier: payload.toolName || payload.name,
-        description: payload.description
-      },
-      parameters: payload.arguments || {},
-      constraints: {
-        timeout: payload.options?.timeout,
-        priority: 'normal'
-      },
-      context: {
-        session: message.sessionId
+    try {
+      const payload = message.payload || message;
+      
+      // Validate tool information
+      if (!payload.toolName && !payload.name && !payload.toolId) {
+        throw new Error('Tool-centric message missing tool identifier');
       }
-    };
+      
+      return {
+        action: 'execute',
+        target: {
+          type: 'tool',
+          identifier: payload.toolName || payload.name || payload.toolId,
+          description: payload.description || `Execute ${payload.toolName || payload.name || payload.toolId}`
+        },
+        parameters: payload.arguments || {},
+        constraints: {
+          timeout: payload.options?.timeout,
+          priority: payload.options?.priority || 'normal'
+        },
+        context: {
+          session: message.sessionId || payload.sessionId
+        }
+      };
+    } catch (error) {
+      console.warn('Error extracting tool-centric intent:', error);
+      throw error; // Re-throw to be caught by main extractSemanticIntent
+    }
   }
 
   /**
    * Extract intent from task-centric message
    */
   private extractTaskCentricIntent(message: any): SemanticIntent {
-    const task = message.task || message.payload?.task || message;
-    
-    return {
-      action: this.inferAction(task.taskType),
-      target: {
-        type: 'task',
-        identifier: task.taskType,
-        description: task.description
-      },
-      parameters: task.input || {},
-      constraints: {
-        timeout: task.config?.timeout,
-        priority: task.config?.priority || 'normal',
-        quality: task.config?.quality
-      },
-      expectedOutcome: {
-        type: task.outputType || 'any',
-        format: task.outputFormat
-      },
-      context: {
-        session: message.context?.sessionId,
-        conversation: message.context?.conversationId,
-        user: message.context?.user
+    try {
+      const task = message.task || message.payload?.task || message;
+      
+      // Validate task information
+      if (!task.taskType && !task.type) {
+        throw new Error('Task-centric message missing task type');
       }
-    };
+      
+      const taskType = task.taskType || task.type;
+      
+      return {
+        action: this.inferAction(taskType),
+        target: {
+          type: 'task',
+          identifier: taskType,
+          description: task.description || `Execute task: ${taskType}`
+        },
+        parameters: task.input || task.parameters || {},
+        constraints: {
+          timeout: task.config?.timeout,
+          priority: task.config?.priority || 'normal',
+          quality: task.config?.quality
+        },
+        expectedOutcome: {
+          type: task.outputType || task.config?.outputType || 'any',
+          format: task.outputFormat || task.config?.outputFormat
+        },
+        context: {
+          session: message.context?.sessionId || message.sessionId,
+          conversation: message.context?.conversationId,
+          user: message.context?.user
+        }
+      };
+    } catch (error) {
+      console.warn('Error extracting task-centric intent:', error);
+      throw error; // Re-throw to be caught by main extractSemanticIntent
+    }
   }
 
   /**
    * Extract intent from function-calling message
    */
   private extractFunctionCallingIntent(message: any): SemanticIntent {
-    const func = message.function || message.payload;
-    
-    return {
-      action: 'execute',
-      target: {
-        type: 'function',
-        identifier: func.name,
-        description: func.description
-      },
-      parameters: func.parameters || {},
-      constraints: {},
-      expectedOutcome: {
-        type: func.returnType || 'any'
-      },
-      context: {
-        session: message.sessionId
+    try {
+      const func = message.function || message.payload?.function || message.payload || message;
+      
+      // Validate function information
+      if (!func.name && !func.functionName) {
+        throw new Error('Function-calling message missing function name');
       }
-    };
+      
+      return {
+        action: 'execute',
+        target: {
+          type: 'function',
+          identifier: func.name || func.functionName,
+          description: func.description || `Call function: ${func.name || func.functionName}`
+        },
+        parameters: func.parameters || func.arguments || {},
+        constraints: {
+          timeout: func.timeout
+        },
+        expectedOutcome: {
+          type: func.returnType || func.returns || 'any'
+        },
+        context: {
+          session: message.sessionId || func.sessionId
+        }
+      };
+    } catch (error) {
+      console.warn('Error extracting function-calling intent:', error);
+      throw error; // Re-throw to be caught by main extractSemanticIntent
+    }
   }
 
   /**
    * Extract generic intent as fallback
    */
   private extractGenericIntent(message: any): SemanticIntent {
-    return {
-      action: 'other',
-      target: {
-        type: 'unknown',
-        identifier: message.id || 'unknown',
-        description: 'Generic message'
-      },
-      parameters: message.payload || {},
-      context: {
-        session: message.sessionId
-      }
-    };
+    try {
+      // Best effort extraction from unknown format
+      const payload = message.payload || message.data || message.body || message;
+      const identifier = message.id || message.messageId || message.requestId || 'unknown';
+      
+      return {
+        action: 'other',
+        target: {
+          type: 'unknown',
+          identifier: identifier,
+          description: message.description || message.type || 'Generic message'
+        },
+        parameters: typeof payload === 'object' ? payload : { data: payload },
+        constraints: {
+          timeout: message.timeout || payload.timeout
+        },
+        context: {
+          session: message.sessionId || message.session || payload.sessionId
+        }
+      };
+    } catch (error) {
+      console.warn('Error extracting generic intent:', error);
+      // Return minimal valid intent
+      return {
+        action: 'other' as const,
+        target: {
+          type: 'error',
+          identifier: 'extraction-failed',
+          description: 'Failed to extract intent from message'
+        },
+        parameters: {},
+        context: {}
+      };
+    }
   }
 
   /**
@@ -330,7 +429,7 @@ export class SemanticMapper {
   /**
    * Calculate semantic match score
    */
-  private calculateSemanticMatch(source: any, target: any, intent: SemanticIntent): number {
+  private calculateSemanticMatch(source: any, target: any, _intent: SemanticIntent): number {
     // Check if core intent is preserved
     let score = 0.8; // Base score if intent extracted
 
@@ -412,12 +511,15 @@ export class SemanticMapper {
     });
     
     // Clean old entries (keep last 100)
-    if (context.shadowState.size > 100) {
+    if (context.shadowState && context.shadowState.size > 100) {
       const entries = Array.from(context.shadowState.entries());
       entries.sort((a, b) => a[1].timestamp - b[1].timestamp);
       
       for (let i = 0; i < entries.length - 100; i++) {
-        context.shadowState.delete(entries[i][0]);
+        const entry = entries[i];
+        if (entry) {
+          context.shadowState.delete(entry[0]);
+        }
       }
     }
   }
@@ -445,13 +547,13 @@ export class SemanticMapper {
    * Generate unique message ID
    */
   private generateMessageId(): string {
-    return `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    return `msg_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
   }
 
   /**
    * Generate unique ID
    */
   private generateId(): string | number {
-    return `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    return `${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
   }
 }

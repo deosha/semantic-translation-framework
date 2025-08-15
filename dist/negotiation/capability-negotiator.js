@@ -1,377 +1,473 @@
 "use strict";
 /**
- * Protocol Capability Negotiation Layer
+ * Capability Negotiator
  *
- * Dynamically negotiates and advertises capabilities between MCP and A2A protocols
- * Based on paper Section IV.C: Production Deployment Considerations
+ * Automatically discovers and negotiates capabilities between different
+ * protocol paradigms, generating fallback strategies for incompatible features.
  *
- * Features:
- * - Automatic capability discovery
- * - Feature compatibility checking
- * - Fallback strategy determination
- * - Version negotiation
+ * Based on paper Section IV.E: Capability Negotiation
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CapabilityNegotiator = void 0;
-const events_1 = require("events");
+const protocols_1 = require("../types/protocols");
 /**
  * Capability Negotiator
  *
- * Handles dynamic capability discovery and negotiation
+ * Handles protocol capability discovery and fallback generation
  */
-class CapabilityNegotiator extends events_1.EventEmitter {
-    // Protocol manifests
-    mcpManifest = null;
-    a2aManifest = null;
-    // Capability mappings
-    mappings;
-    // Negotiation cache
-    negotiationCache;
-    // Compatibility matrix
-    compatibilityMatrix;
+class CapabilityNegotiator {
+    fallbackStrategies;
+    capabilityCache;
     constructor() {
-        super();
-        this.mappings = new Map();
-        this.negotiationCache = new Map();
-        this.compatibilityMatrix = new Map();
-        // Initialize default mappings
-        this.initializeDefaultMappings();
+        this.fallbackStrategies = this.initializeFallbackStrategies();
+        this.capabilityCache = new Map();
     }
     /**
-     * Discover MCP capabilities
+     * Negotiate capabilities between two protocol paradigms
      */
-    async discoverMCPCapabilities(tools, resources, prompts) {
-        const capabilities = [];
-        // Analyze tools
-        if (tools && tools.length > 0) {
-            capabilities.push({
-                name: 'tools',
-                version: '1.0',
-                required: true,
-                features: tools.map(t => t.name),
-                metadata: { count: tools.length }
-            });
-        }
-        // Analyze resources
-        if (resources && resources.length > 0) {
-            capabilities.push({
-                name: 'resources',
-                version: '1.0',
-                required: false,
-                features: ['uri-based-access'],
-                metadata: { count: resources.length }
-            });
-        }
-        // Analyze prompts
-        if (prompts && prompts.length > 0) {
-            capabilities.push({
-                name: 'prompts',
-                version: '1.0',
-                required: false,
-                features: prompts.map(p => p.name),
-                metadata: { count: prompts.length }
-            });
-        }
-        // Create manifest
-        const manifest = {
-            protocol: 'mcp',
-            version: '1.0.0',
-            capabilities,
-            features: {
-                streaming: false, // MCP doesn't support streaming by default
-                batching: true,
-                compression: false,
-                encryption: false,
-                stateful: false, // MCP is stateless
-                multiModal: true, // Supports text, images, resources
-                contextAware: false
-            },
-            performance: {
-                maxConcurrency: 10,
-                maxMessageSize: 1024 * 1024, // 1MB
-                timeout: 30000,
-                rateLimit: 100
-            },
-            authentication: {
-                type: 'none',
-                required: false
-            }
-        };
-        this.mcpManifest = manifest;
-        this.emit('capabilities:discovered', {
-            protocol: 'mcp',
-            capabilities: capabilities.length
-        });
-        return manifest;
-    }
-    /**
-     * Discover A2A capabilities
-     */
-    async discoverA2ACapabilities(agentCards) {
-        const capabilities = [];
-        const allFeatures = [];
-        // Analyze agent cards
-        if (agentCards && agentCards.length > 0) {
-            for (const card of agentCards) {
-                const features = card.capabilities.map(c => `${card.agentId}.${c.name}`);
-                allFeatures.push(...features);
-                capabilities.push({
-                    name: card.agentId,
-                    version: card.version,
-                    required: false,
-                    features: card.capabilities.map(c => c.name),
-                    metadata: {
-                        description: card.description,
-                        streaming: card.capabilities.some(c => c.streaming),
-                        rateLimits: card.metadata?.rateLimits
-                    }
-                });
-            }
-        }
-        // Create manifest
-        const manifest = {
-            protocol: 'a2a',
-            version: '1.0.0',
-            capabilities,
-            features: {
-                streaming: true, // A2A supports Server-Sent Events
-                batching: true,
-                compression: true,
-                encryption: true,
-                stateful: true, // A2A maintains conversation context
-                multiModal: true, // Supports various message parts
-                contextAware: true
-            },
-            performance: {
-                maxConcurrency: 50,
-                maxMessageSize: 10 * 1024 * 1024, // 10MB
-                timeout: 60000,
-                rateLimit: agentCards?.[0]?.metadata?.rateLimits?.requestsPerMinute || 1000
-            },
-            authentication: {
-                type: agentCards?.[0]?.metadata?.authentication || 'api-key',
-                required: true
-            }
-        };
-        this.a2aManifest = manifest;
-        this.emit('capabilities:discovered', {
-            protocol: 'a2a',
-            capabilities: capabilities.length
-        });
-        return manifest;
-    }
-    /**
-     * Negotiate capabilities between protocols
-     */
-    async negotiate(mcpManifest, a2aManifest) {
-        // Use provided manifests or cached ones
-        const mcp = mcpManifest || this.mcpManifest;
-        const a2a = a2aManifest || this.a2aManifest;
-        if (!mcp || !a2a) {
-            throw new Error('Protocol manifests not available for negotiation');
-        }
+    async negotiate(sourceManifest, targetManifest) {
         // Check cache
-        const cacheKey = `${mcp.version}-${a2a.version}`;
-        const cached = this.negotiationCache.get(cacheKey);
-        if (cached) {
-            return cached;
+        const cacheKey = `${sourceManifest.id}:${targetManifest.id}`;
+        if (this.capabilityCache.has(cacheKey)) {
+            return this.capabilityCache.get(cacheKey);
         }
-        const negotiatedCapabilities = [];
-        const fallbacks = [];
-        const warnings = [];
-        const recommendations = {};
-        // Negotiate feature compatibility
-        this.negotiateFeatures(mcp.features, a2a.features);
-        // Handle streaming mismatch
-        if (!mcp.features.streaming && a2a.features.streaming) {
-            fallbacks.push({
-                feature: 'streaming',
-                strategy: 'polling-emulation',
-                confidence: 0.7
-            });
-            warnings.push('MCP does not support streaming; will use polling emulation');
-        }
-        // Handle state management mismatch
-        if (!mcp.features.stateful && a2a.features.stateful) {
-            fallbacks.push({
-                feature: 'state-management',
-                strategy: 'context-preservation',
-                confidence: 0.85
-            });
-            warnings.push('MCP is stateless; using context preservation for state management');
-        }
-        // Map capabilities
-        for (const mcpCap of mcp.capabilities) {
-            const mapping = this.findBestMapping(mcpCap, a2a.capabilities);
-            if (mapping) {
-                negotiatedCapabilities.push({
-                    name: `${mcpCap.name}-${mapping.name}`,
-                    version: '1.0',
-                    required: mcpCap.required || mapping.required,
-                    features: [...mcpCap.features, ...mapping.features],
-                    metadata: {
-                        source: mcpCap.name,
-                        target: mapping.name,
-                        confidence: this.calculateMappingConfidence(mcpCap, mapping)
-                    }
-                });
-            }
-            else if (mcpCap.required) {
-                warnings.push(`Required MCP capability '${mcpCap.name}' has no A2A equivalent`);
-            }
-        }
-        // Calculate overall compatibility
-        const compatibility = this.calculateCompatibility(negotiatedCapabilities, mcp.capabilities, a2a.capabilities);
+        // Analyze feature compatibility
+        const gaps = this.identifyCapabilityGaps(sourceManifest.features, targetManifest.features);
+        // Generate fallback strategies
+        const fallbacks = this.generateFallbackStrategies(gaps);
+        // Calculate compatibility score
+        const compatibility = this.calculateCompatibility(sourceManifest, targetManifest, gaps);
+        // Find compatible capabilities
+        const compatibleCapabilities = this.findCompatibleCapabilities(sourceManifest.capabilities, targetManifest.capabilities);
         // Generate recommendations
-        if (compatibility < 0.8) {
-            recommendations.caching = 'aggressive';
-            recommendations.retryStrategy = 'exponential-backoff';
-            recommendations.confidenceThreshold = 0.6;
-        }
-        if (mcp.performance && a2a.performance) {
-            recommendations.maxConcurrency = Math.min(mcp.performance.maxConcurrency || 10, a2a.performance.maxConcurrency || 50);
-            recommendations.timeout = Math.max(mcp.performance.timeout || 30000, a2a.performance.timeout || 60000);
-        }
+        const recommendations = this.generateRecommendations(gaps, fallbacks, compatibility);
         const result = {
-            success: compatibility >= 0.5 && !warnings.some(w => w.includes('Required')),
-            capabilities: negotiatedCapabilities,
+            success: compatibility > 0.5,
             compatibility,
+            capabilities: compatibleCapabilities,
             fallbacks,
-            warnings,
+            warnings: this.generateWarnings(gaps, fallbacks),
             recommendations
         };
         // Cache result
-        this.negotiationCache.set(cacheKey, result);
-        this.emit('negotiation:complete', {
-            success: result.success,
-            compatibility,
-            warnings: warnings.length
-        });
+        this.capabilityCache.set(cacheKey, result);
         return result;
     }
     /**
-     * Check if a specific capability is supported
+     * Identify capability gaps between protocols
      */
-    isCapabilitySupported(capability, protocol) {
-        const manifest = protocol === 'mcp' ? this.mcpManifest : this.a2aManifest;
-        if (!manifest)
-            return false;
-        return manifest.capabilities.some(cap => cap.name === capability || cap.features.includes(capability));
+    identifyCapabilityGaps(sourceFeatures, targetFeatures) {
+        const gaps = [];
+        // Check each feature
+        const features = [
+            'streaming',
+            'stateful',
+            'multiModal',
+            'batching',
+            'transactions',
+            'async',
+            'partialResults',
+            'discovery'
+        ];
+        for (const feature of features) {
+            const sourceSupport = sourceFeatures[feature];
+            const targetSupport = targetFeatures[feature];
+            if (sourceSupport && !targetSupport) {
+                gaps.push({
+                    feature,
+                    sourceSupport,
+                    targetSupport,
+                    severity: this.assessSeverity(feature),
+                    fallbackStrategies: this.getFallbacksForFeature(feature)
+                });
+            }
+        }
+        return gaps;
     }
     /**
-     * Get fallback strategy for unsupported capability
+     * Generate fallback strategies for capability gaps
      */
-    getFallbackStrategy(capability, sourceProtocol) {
-        const key = `${sourceProtocol}:${capability}`;
-        // Predefined fallback strategies
-        const fallbackStrategies = {
-            'mcp:streaming': { strategy: 'polling-emulation', confidence: 0.7 },
-            'a2a:tools': { strategy: 'capability-mapping', confidence: 0.9 },
-            'mcp:state': { strategy: 'context-preservation', confidence: 0.85 },
-            'a2a:stateless': { strategy: 'session-simulation', confidence: 0.8 }
+    generateFallbackStrategies(gaps) {
+        const strategies = [];
+        for (const gap of gaps) {
+            const fallback = this.fallbackStrategies.get(gap.feature);
+            if (fallback) {
+                strategies.push(fallback);
+            }
+            else {
+                // Generate generic fallback
+                strategies.push(this.createGenericFallback(gap));
+            }
+        }
+        return strategies;
+    }
+    /**
+     * Calculate overall compatibility score
+     */
+    calculateCompatibility(sourceManifest, targetManifest, gaps) {
+        // Base compatibility from paradigm match
+        let score = this.getParadigmCompatibility(sourceManifest.paradigm, targetManifest.paradigm);
+        // Reduce score based on gaps
+        for (const gap of gaps) {
+            const penalty = this.getGapPenalty(gap);
+            score = Math.max(0, score - penalty);
+        }
+        // Boost score for matching constraints
+        if (this.constraintsCompatible(sourceManifest.constraints, targetManifest.constraints)) {
+            score = Math.min(1.0, score + 0.1);
+        }
+        return score;
+    }
+    /**
+     * Find compatible capabilities between protocols
+     */
+    findCompatibleCapabilities(sourceCapabilities, targetCapabilities) {
+        const compatible = [];
+        for (const sourceCap of sourceCapabilities) {
+            for (const targetCap of targetCapabilities) {
+                const confidence = this.compareCapabilities(sourceCap, targetCap);
+                if (confidence > 0.5) {
+                    compatible.push({
+                        name: sourceCap.name,
+                        confidence
+                    });
+                }
+            }
+        }
+        return compatible;
+    }
+    /**
+     * Compare two capabilities for compatibility
+     */
+    compareCapabilities(source, target) {
+        let score = 0;
+        // Name similarity
+        if (source.name === target.name) {
+            score += 0.4;
+        }
+        else if (this.areNamesSimilar(source.name, target.name)) {
+            score += 0.2;
+        }
+        // Feature compatibility
+        const sourceFeatures = source.features || {};
+        const targetFeatures = target.features || {};
+        let featureMatches = 0;
+        let totalFeatures = 0;
+        for (const [key, value] of Object.entries(sourceFeatures)) {
+            totalFeatures++;
+            if (targetFeatures[key] === value) {
+                featureMatches++;
+            }
+        }
+        if (totalFeatures > 0) {
+            score += (featureMatches / totalFeatures) * 0.3;
+        }
+        // Constraint compatibility
+        if (this.constraintsCompatible(source.constraints, target.constraints)) {
+            score += 0.3;
+        }
+        return Math.min(1.0, score);
+    }
+    /**
+     * Check if two names are similar
+     */
+    areNamesSimilar(name1, name2) {
+        // Simple similarity check
+        const normalized1 = name1.toLowerCase().replace(/[-_]/g, '');
+        const normalized2 = name2.toLowerCase().replace(/[-_]/g, '');
+        return normalized1.includes(normalized2) || normalized2.includes(normalized1);
+    }
+    /**
+     * Check if constraints are compatible
+     */
+    constraintsCompatible(source, target) {
+        if (!source || !target)
+            return true;
+        // Check execution time
+        if (source.maxExecutionTime && target.maxExecutionTime) {
+            if (source.maxExecutionTime > target.maxExecutionTime) {
+                return false;
+            }
+        }
+        // Check size limits
+        if (source.maxInputSize && target.maxInputSize) {
+            if (source.maxInputSize > target.maxInputSize) {
+                return false;
+            }
+        }
+        return true;
+    }
+    /**
+     * Get paradigm compatibility score
+     */
+    getParadigmCompatibility(source, target) {
+        const compatibilityMatrix = {
+            [protocols_1.ProtocolParadigm.TOOL_CENTRIC]: {
+                [protocols_1.ProtocolParadigm.TOOL_CENTRIC]: 1.0,
+                [protocols_1.ProtocolParadigm.TASK_CENTRIC]: 0.7,
+                [protocols_1.ProtocolParadigm.FUNCTION_CALLING]: 0.9,
+                [protocols_1.ProtocolParadigm.FRAMEWORK_SPECIFIC]: 0.5
+            },
+            [protocols_1.ProtocolParadigm.TASK_CENTRIC]: {
+                [protocols_1.ProtocolParadigm.TOOL_CENTRIC]: 0.7,
+                [protocols_1.ProtocolParadigm.TASK_CENTRIC]: 1.0,
+                [protocols_1.ProtocolParadigm.FUNCTION_CALLING]: 0.6,
+                [protocols_1.ProtocolParadigm.FRAMEWORK_SPECIFIC]: 0.5
+            },
+            [protocols_1.ProtocolParadigm.FUNCTION_CALLING]: {
+                [protocols_1.ProtocolParadigm.TOOL_CENTRIC]: 0.9,
+                [protocols_1.ProtocolParadigm.TASK_CENTRIC]: 0.6,
+                [protocols_1.ProtocolParadigm.FUNCTION_CALLING]: 1.0,
+                [protocols_1.ProtocolParadigm.FRAMEWORK_SPECIFIC]: 0.7
+            },
+            [protocols_1.ProtocolParadigm.FRAMEWORK_SPECIFIC]: {
+                [protocols_1.ProtocolParadigm.TOOL_CENTRIC]: 0.5,
+                [protocols_1.ProtocolParadigm.TASK_CENTRIC]: 0.5,
+                [protocols_1.ProtocolParadigm.FUNCTION_CALLING]: 0.7,
+                [protocols_1.ProtocolParadigm.FRAMEWORK_SPECIFIC]: 1.0
+            }
         };
-        return fallbackStrategies[key] || null;
+        return compatibilityMatrix[source]?.[target] || 0.3;
     }
     /**
-     * Update capability mapping
+     * Assess severity of a capability gap
      */
-    updateMapping(source, target, confidence, transformations) {
-        const mapping = {
-            source,
-            target,
-            confidence,
-            transformations
+    assessSeverity(feature) {
+        const severityMap = {
+            'streaming': 'medium',
+            'stateful': 'high',
+            'multiModal': 'medium',
+            'batching': 'low',
+            'transactions': 'high',
+            'async': 'medium',
+            'partialResults': 'low',
+            'discovery': 'low'
         };
-        this.mappings.set(`${source}-${target}`, mapping);
-        // Clear negotiation cache as mappings have changed
-        this.negotiationCache.clear();
-        this.emit('mapping:updated', { source, target, confidence });
+        return severityMap[feature] || 'medium';
     }
     /**
-     * Get compatibility score between two capabilities
+     * Get penalty for a capability gap
      */
-    getCompatibilityScore(mcpCapability, a2aCapability) {
-        const key = `${mcpCapability}-${a2aCapability}`;
-        return this.compatibilityMatrix.get(key) || 0;
+    getGapPenalty(gap) {
+        const penalties = {
+            'low': 0.05,
+            'medium': 0.1,
+            'high': 0.2,
+            'critical': 0.4
+        };
+        return penalties[gap.severity] || 0.1;
     }
-    // Private helper methods
-    initializeDefaultMappings() {
-        // Default MCP to A2A mappings
-        this.mappings.set('tools-capabilities', {
-            source: 'tools',
-            target: 'capabilities',
-            confidence: 0.9,
-            transformations: ['tool-to-capability']
-        });
-        this.mappings.set('resources-data', {
-            source: 'resources',
-            target: 'data-sources',
-            confidence: 0.85,
-            transformations: ['uri-to-data-source']
-        });
-        this.mappings.set('prompts-templates', {
-            source: 'prompts',
-            target: 'templates',
-            confidence: 0.8,
-            transformations: ['prompt-to-template']
-        });
-        // Initialize compatibility matrix
-        this.compatibilityMatrix.set('tools-capabilities', 0.9);
-        this.compatibilityMatrix.set('resources-data', 0.85);
-        this.compatibilityMatrix.set('prompts-templates', 0.8);
+    /**
+     * Get fallback strategies for a specific feature
+     */
+    getFallbacksForFeature(feature) {
+        const fallbackMap = {
+            'streaming': [
+                {
+                    name: 'polling-emulation',
+                    description: 'Emulate streaming through periodic polling',
+                    confidence: 0.7,
+                    implementation: 'poll-with-backoff'
+                },
+                {
+                    name: 'batch-results',
+                    description: 'Return results in batches',
+                    confidence: 0.6,
+                    implementation: 'batch-accumulator'
+                }
+            ],
+            'stateful': [
+                {
+                    name: 'shadow-state',
+                    description: 'Maintain shadow state in translation layer',
+                    confidence: 0.8,
+                    implementation: 'state-synthesis'
+                },
+                {
+                    name: 'session-tokens',
+                    description: 'Use session tokens for state tracking',
+                    confidence: 0.7,
+                    implementation: 'token-management'
+                }
+            ],
+            'multiModal': [
+                {
+                    name: 'base64-encoding',
+                    description: 'Encode binary data as base64 strings',
+                    confidence: 0.9,
+                    implementation: 'base64-transform'
+                },
+                {
+                    name: 'url-references',
+                    description: 'Use URLs to reference media',
+                    confidence: 0.8,
+                    implementation: 'url-linking'
+                }
+            ]
+        };
+        return fallbackMap[feature] || [];
     }
-    negotiateFeatures(mcpFeatures, a2aFeatures) {
-        if (!mcpFeatures || !a2aFeatures)
-            return 0;
-        let matchCount = 0;
-        let totalCount = 0;
-        for (const [key, mcpValue] of Object.entries(mcpFeatures)) {
-            totalCount++;
-            if (a2aFeatures[key] === mcpValue) {
-                matchCount++;
+    /**
+     * Create generic fallback for unknown features
+     */
+    createGenericFallback(gap) {
+        return {
+            name: `generic-${gap.feature}-fallback`,
+            feature: gap.feature,
+            type: 'degradation',
+            confidenceImpact: 0.2,
+            implementation: {
+                params: {
+                    strategy: 'best-effort',
+                    lossAcceptable: true
+                }
+            }
+        };
+    }
+    /**
+     * Generate warnings based on gaps and fallbacks
+     */
+    generateWarnings(gaps, fallbacks) {
+        const warnings = [];
+        for (const gap of gaps) {
+            if (gap.severity === 'critical') {
+                warnings.push(`Critical capability gap: ${gap.feature} not supported in target`);
+            }
+            else if (gap.severity === 'high') {
+                warnings.push(`Significant capability gap: ${gap.feature} will be emulated`);
             }
         }
-        return totalCount > 0 ? matchCount / totalCount : 0;
-    }
-    findBestMapping(mcpCap, a2aCaps) {
-        let bestMatch = null;
-        let bestScore = 0;
-        for (const a2aCap of a2aCaps) {
-            const score = this.calculateMappingConfidence(mcpCap, a2aCap);
-            if (score > bestScore) {
-                bestScore = score;
-                bestMatch = a2aCap;
+        for (const fallback of fallbacks) {
+            if (fallback.confidenceImpact > 0.15) {
+                warnings.push(`Fallback '${fallback.name}' may significantly impact translation quality`);
             }
         }
-        return bestScore > 0.5 ? bestMatch : null;
+        return warnings;
     }
-    calculateMappingConfidence(mcpCap, a2aCap) {
-        // Check for direct mapping
-        const mappingKey = `${mcpCap.name}-${a2aCap.name}`;
-        const mapping = this.mappings.get(mappingKey);
-        if (mapping) {
-            return mapping.confidence;
+    /**
+     * Generate recommendations for improving compatibility
+     */
+    generateRecommendations(gaps, fallbacks, compatibility) {
+        const recommendations = {};
+        if (compatibility < 0.5) {
+            recommendations.warning = 'Low compatibility - consider alternative protocols';
         }
-        // Calculate based on feature overlap
-        const mcpFeatures = new Set(mcpCap.features);
-        const a2aFeatures = new Set(a2aCap.features);
-        let overlap = 0;
-        for (const feature of mcpFeatures) {
-            if (a2aFeatures.has(feature)) {
-                overlap++;
+        // Streaming recommendations
+        if (gaps.some(g => g.feature === 'streaming')) {
+            recommendations.streaming = {
+                strategy: 'Use polling with exponential backoff',
+                interval: '100ms initial, max 5s',
+                partial: 'Enable partial result accumulation'
+            };
+        }
+        // State recommendations
+        if (gaps.some(g => g.feature === 'stateful')) {
+            recommendations.state = {
+                strategy: 'Implement shadow state management',
+                storage: 'Use Redis for distributed state',
+                ttl: '3600 seconds recommended'
+            };
+        }
+        // Performance recommendations
+        if (gaps.length > 3) {
+            recommendations.performance = {
+                caching: 'Enable aggressive caching',
+                batching: 'Batch similar requests',
+                precompute: 'Pre-compute common translations'
+            };
+        }
+        return recommendations;
+    }
+    /**
+     * Initialize built-in fallback strategies
+     */
+    initializeFallbackStrategies() {
+        const strategies = new Map();
+        // Streaming fallback
+        strategies.set('streaming', {
+            name: 'streaming-to-polling',
+            feature: 'streaming',
+            type: 'emulation',
+            confidenceImpact: 0.05,
+            implementation: {
+                params: {
+                    pollingInterval: 100,
+                    maxPolls: 100,
+                    backoffMultiplier: 1.5
+                },
+                resources: ['timer', 'memory-buffer'],
+                performanceImpact: {
+                    latencyMs: 50,
+                    memoryMb: 10,
+                    cpuPercent: 5
+                }
             }
-        }
-        const total = Math.max(mcpFeatures.size, a2aFeatures.size);
-        return total > 0 ? overlap / total : 0;
+        });
+        // Stateful fallback
+        strategies.set('stateful', {
+            name: 'stateful-to-stateless',
+            feature: 'stateful',
+            type: 'synthesis',
+            confidenceImpact: 0.1,
+            implementation: {
+                params: {
+                    stateStore: 'shadow',
+                    ttl: 3600,
+                    maxStateSize: 1048576
+                },
+                resources: ['memory', 'storage'],
+                performanceImpact: {
+                    latencyMs: 5,
+                    memoryMb: 50,
+                    cpuPercent: 2
+                }
+            }
+        });
+        // Multi-modal fallback
+        strategies.set('multiModal', {
+            name: 'multimodal-to-text',
+            feature: 'multiModal',
+            type: 'degradation',
+            confidenceImpact: 0.15,
+            implementation: {
+                params: {
+                    encoding: 'base64',
+                    compressionLevel: 6,
+                    maxSize: 10485760
+                },
+                resources: ['cpu', 'memory'],
+                performanceImpact: {
+                    latencyMs: 20,
+                    memoryMb: 100,
+                    cpuPercent: 10
+                }
+            }
+        });
+        // Async fallback
+        strategies.set('async', {
+            name: 'async-to-sync',
+            feature: 'async',
+            type: 'emulation',
+            confidenceImpact: 0.05,
+            implementation: {
+                params: {
+                    timeout: 30000,
+                    pollInterval: 100
+                },
+                performanceImpact: {
+                    latencyMs: 100,
+                    memoryMb: 5,
+                    cpuPercent: 1
+                }
+            }
+        });
+        return strategies;
     }
-    calculateCompatibility(negotiated, mcpCaps, a2aCaps) {
-        const requiredMcp = mcpCaps.filter(c => c.required).length;
-        const requiredA2a = a2aCaps.filter(c => c.required).length;
-        const totalRequired = requiredMcp + requiredA2a;
-        if (totalRequired === 0)
-            return 1;
-        const negotiatedRequired = negotiated.filter(c => c.required).length;
-        return negotiatedRequired / totalRequired;
+    /**
+     * Clear capability cache
+     */
+    clearCache() {
+        this.capabilityCache.clear();
     }
 }
 exports.CapabilityNegotiator = CapabilityNegotiator;

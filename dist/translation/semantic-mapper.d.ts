@@ -1,94 +1,99 @@
 /**
- * Semantic Mapping Engine
+ * Semantic Mapper
  *
- * Implements the confidence-scored semantic mapping algorithm from the paper.
- * This is the core intelligence that bridges the paradigm gap between
- * MCP's tool-centric and A2A's task-centric architectures.
+ * Core component responsible for extracting semantic intent from protocol
+ * messages and reconstructing equivalent representations in target protocols.
+ * This is the heart of the semantic translation framework.
+ *
+ * Based on paper Section IV.B: Semantic Mapping Algorithm
  */
-import { TranslationConfidence, TranslationContext } from '../types/translation';
-import { MCPTool, MCPToolCallRequest, MCPToolCallResponse } from '../protocols/mcp.types';
-import { A2AAgentCard, A2ATaskRequest, A2ATaskResponse } from '../protocols/a2a.types';
+import { SemanticIntent, ProtocolMessage, ToolInvocationRequest, TaskRequest } from '../types/protocols';
+import { TranslationConfidence, SemanticTranslationContext } from '../types/semantic-translation';
 /**
- * Semantic Mapper Class
+ * Semantic Mapper
  *
- * Core translation logic with confidence scoring
+ * Handles the core semantic translation logic
  */
 export declare class SemanticMapper {
     /**
-     * Confidence threshold below which translations are considered unreliable
-     */
-    private readonly CONFIDENCE_THRESHOLD;
-    /**
-     * Weight factors for confidence calculation (must sum to 1.0)
-     */
-    private readonly CONFIDENCE_WEIGHTS;
-    /**
-     * Map MCP Tool to A2A Agent Capability
+     * Extract semantic intent from any protocol message
      *
-     * Translates a tool-centric function definition to a task-centric capability
+     * This is the key innovation - we extract the "what" not the "how"
      */
-    mapMCPToolToA2ACapability(tool: MCPTool, context: TranslationContext): {
-        capability: any;
+    extractSemanticIntent(message: ProtocolMessage, context?: SemanticTranslationContext): SemanticIntent;
+    /**
+     * Infer paradigm from message structure
+     */
+    private inferParadigm;
+    /**
+     * Map tool-centric to task-centric paradigm
+     */
+    mapToolToTask(toolRequest: ToolInvocationRequest, context: SemanticTranslationContext): {
+        task: TaskRequest;
         confidence: TranslationConfidence;
     };
     /**
-     * Map MCP Tool Call Request to A2A Task Request
-     *
-     * Converts stateless tool invocation to stateful task execution
+     * Map task-centric to tool-centric paradigm
      */
-    mapMCPToolCallToA2ATask(mcpRequest: MCPToolCallRequest, context: TranslationContext): {
-        task: A2ATaskRequest;
+    mapTaskToTool(taskRequest: TaskRequest, _context: SemanticTranslationContext): {
+        tool: ToolInvocationRequest;
         confidence: TranslationConfidence;
     };
     /**
-     * Map A2A Task Response to MCP Tool Call Response
-     *
-     * Converts stateful task result back to stateless tool response
+     * Calculate confidence score for a translation
      */
-    mapA2ATaskToMCPResponse(a2aResponse: A2ATaskResponse, context: TranslationContext): {
-        response: MCPToolCallResponse;
-        confidence: TranslationConfidence;
-    };
+    private calculateMappingConfidence;
     /**
-     * Map A2A Agent Card to MCP Tools
-     *
-     * Converts agent capabilities to individual tools
+     * Extract intent from tool-centric message
      */
-    mapA2AAgentToMCPTools(agentCard: A2AAgentCard, _context: TranslationContext): {
-        tools: MCPTool[];
-        confidence: TranslationConfidence;
-    };
+    private extractToolCentricIntent;
     /**
-     * Convert MCP arguments to A2A message parts
+     * Extract intent from task-centric message
      */
-    private convertArgumentsToMessageParts;
+    private extractTaskCentricIntent;
     /**
-     * Convert A2A message parts to MCP content
+     * Extract intent from function-calling message
      */
-    private convertMessagePartsToMCPContent;
+    private extractFunctionCallingIntent;
     /**
-     * Calculate confidence score for tool mapping
+     * Extract generic intent as fallback
      */
-    private calculateToolMappingConfidence;
+    private extractGenericIntent;
     /**
-     * Calculate confidence for request mapping
+     * Infer action from task type
      */
-    private calculateRequestMappingConfidence;
+    private inferAction;
     /**
-     * Calculate confidence for response mapping
+     * Calculate semantic match score
      */
-    private calculateResponseMappingConfidence;
+    private calculateSemanticMatch;
     /**
-     * Calculate capability mapping confidence
+     * Calculate structural alignment
      */
-    private calculateCapabilityMappingConfidence;
+    private calculateStructuralAlignment;
     /**
-     * Calculate schema complexity (depth of nesting)
+     * Calculate data preservation
      */
-    private calculateSchemaComplexity;
+    private calculateDataPreservation;
     /**
-     * Infer agent ID from tool name and context
+     * Calculate context retention
      */
-    private inferAgentId;
+    private calculateContextRetention;
+    /**
+     * Update shadow state for stateless protocols
+     */
+    private updateShadowState;
+    /**
+     * Count fields in an object (recursive)
+     */
+    private countFields;
+    /**
+     * Generate unique message ID
+     */
+    private generateMessageId;
+    /**
+     * Generate unique ID
+     */
+    private generateId;
 }
 //# sourceMappingURL=semantic-mapper.d.ts.map

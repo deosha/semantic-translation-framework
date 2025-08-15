@@ -1,295 +1,180 @@
 "use strict";
 /**
- * Semantic Mapping Engine
+ * Semantic Mapper
  *
- * Implements the confidence-scored semantic mapping algorithm from the paper.
- * This is the core intelligence that bridges the paradigm gap between
- * MCP's tool-centric and A2A's task-centric architectures.
+ * Core component responsible for extracting semantic intent from protocol
+ * messages and reconstructing equivalent representations in target protocols.
+ * This is the heart of the semantic translation framework.
+ *
+ * Based on paper Section IV.B: Semantic Mapping Algorithm
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SemanticMapper = void 0;
-const translation_1 = require("../types/translation");
-const a2a_types_1 = require("../protocols/a2a.types");
+const protocols_1 = require("../types/protocols");
 /**
- * Semantic Mapper Class
+ * Semantic Mapper
  *
- * Core translation logic with confidence scoring
+ * Handles the core semantic translation logic
  */
 class SemanticMapper {
     /**
-     * Confidence threshold below which translations are considered unreliable
-     */
-    CONFIDENCE_THRESHOLD = 0.7;
-    /**
-     * Weight factors for confidence calculation (must sum to 1.0)
-     */
-    CONFIDENCE_WEIGHTS = {
-        semantic: 0.4, // Most important - preserving meaning
-        structural: 0.25, // Message structure alignment
-        data: 0.25, // Data completeness
-        context: 0.1 // Context preservation
-    };
-    /**
-     * Map MCP Tool to A2A Agent Capability
+     * Extract semantic intent from any protocol message
      *
-     * Translates a tool-centric function definition to a task-centric capability
+     * This is the key innovation - we extract the "what" not the "how"
      */
-    mapMCPToolToA2ACapability(tool, context) {
-        const confidence = this.calculateToolMappingConfidence(tool, context);
-        // Transform tool to capability
-        const capability = {
-            name: tool.name,
-            description: tool.description,
-            inputSchema: tool.inputSchema,
-            outputSchema: {
-                type: 'object',
-                properties: {
-                    result: {
-                        type: 'array',
-                        items: {
-                            type: 'object',
-                            properties: {
-                                type: { type: 'string', enum: ['text', 'image', 'resource'] },
-                                content: { type: 'string' }
-                            }
-                        }
-                    }
+    extractSemanticIntent(message, context) {
+        try {
+            // Validate input message
+            if (!message || !message.payload) {
+                throw new Error('Invalid message: missing payload');
+            }
+            // Validate paradigm
+            if (!message.paradigm) {
+                console.warn('Message missing paradigm, inferring from structure');
+                message.paradigm = this.inferParadigm(message);
+            }
+            // Extract based on paradigm
+            switch (message.paradigm) {
+                case protocols_1.ProtocolParadigm.TOOL_CENTRIC:
+                    return this.extractToolCentricIntent(message);
+                case protocols_1.ProtocolParadigm.TASK_CENTRIC:
+                    return this.extractTaskCentricIntent(message);
+                case protocols_1.ProtocolParadigm.FUNCTION_CALLING:
+                    return this.extractFunctionCallingIntent(message);
+                default:
+                    console.warn(`Unknown paradigm: ${message.paradigm}, using generic extraction`);
+                    return this.extractGenericIntent(message);
+            }
+        }
+        catch (error) {
+            // Log error and return minimal valid intent
+            console.warn('Failed to extract semantic intent:', error);
+            return {
+                action: 'other',
+                target: {
+                    type: 'error',
+                    identifier: message?.id || 'unknown',
+                    description: `Failed to extract intent: ${error instanceof Error ? error.message : 'Unknown error'}`
+                },
+                parameters: message?.payload || {},
+                constraints: {},
+                context: {
+                    session: context?.sessionId || message?.sessionId
                 }
-            },
-            // MCP tools are generally synchronous, not streaming
-            streaming: false
-        };
-        return { capability, confidence };
+            };
+        }
     }
     /**
-     * Map MCP Tool Call Request to A2A Task Request
-     *
-     * Converts stateless tool invocation to stateful task execution
+     * Infer paradigm from message structure
      */
-    mapMCPToolCallToA2ATask(mcpRequest, context) {
-        // Calculate confidence for this specific translation
-        const confidence = this.calculateRequestMappingConfidence(mcpRequest, context);
-        // Generate unique task ID from MCP request ID
-        const taskId = `mcp-${mcpRequest.id}-${Date.now()}`;
-        // Convert tool arguments to multi-modal message parts
-        const inputParts = this.convertArgumentsToMessageParts(mcpRequest.params.arguments);
-        // Build A2A task request
+    inferParadigm(message) {
+        // Check for tool-centric structure
+        if (message.payload?.toolName || message.payload?.toolId) {
+            return protocols_1.ProtocolParadigm.TOOL_CENTRIC;
+        }
+        // Check for task-centric structure
+        if (message.task || message.payload?.task) {
+            return protocols_1.ProtocolParadigm.TASK_CENTRIC;
+        }
+        // Check for function-calling structure
+        if (message.function || message.payload?.function) {
+            return protocols_1.ProtocolParadigm.FUNCTION_CALLING;
+        }
+        // Default to framework-specific
+        return protocols_1.ProtocolParadigm.FRAMEWORK_SPECIFIC;
+    }
+    /**
+     * Map tool-centric to task-centric paradigm
+     */
+    mapToolToTask(toolRequest, context) {
+        // Extract semantic intent
+        const intent = this.extractToolCentricIntent(toolRequest);
+        // Build task request
         const task = {
-            taskId,
-            agentId: this.inferAgentId(mcpRequest.params.name, context),
-            capability: mcpRequest.params.name,
-            input: inputParts,
-            context: {
-                conversationId: context.sessionId,
-                sessionVars: mcpRequest.params.arguments,
-                preferences: {}
-            },
-            config: {
-                timeoutMs: 30000, // Default 30s timeout
-                streaming: false, // MCP doesn't support streaming by default
-                priority: 'normal'
+            id: this.generateMessageId(),
+            type: 'request',
+            paradigm: protocols_1.ProtocolParadigm.TASK_CENTRIC,
+            timestamp: Date.now(),
+            payload: {
+                taskType: intent.target.identifier || toolRequest.payload.toolName,
+                input: intent.parameters,
+                context: {
+                    conversationId: context.sessionId,
+                    sessionVariables: context.conversationContext?.variables
+                }
             }
         };
-        // Store mapping in context for reverse translation
-        context.sessionState.set(`task-${taskId}`, {
-            originalMCPRequest: mcpRequest,
-            timestamp: Date.now()
-        });
+        // Calculate confidence
+        const confidence = this.calculateMappingConfidence(toolRequest, task, intent, 'tool-to-task');
+        // Store in shadow state for stateless protocol
+        this.updateShadowState(context, toolRequest.id, task);
         return { task, confidence };
     }
     /**
-     * Map A2A Task Response to MCP Tool Call Response
-     *
-     * Converts stateful task result back to stateless tool response
+     * Map task-centric to tool-centric paradigm
      */
-    mapA2ATaskToMCPResponse(a2aResponse, context) {
-        // Retrieve original MCP request from context
-        const mapping = context.sessionState.get(`task-${a2aResponse.taskId}`);
-        const originalRequest = mapping?.originalMCPRequest;
-        if (!originalRequest) {
-            throw new translation_1.TranslationError('Cannot map A2A response: original MCP request not found', translation_1.TranslationErrorType.SEMANTIC, false);
-        }
-        const confidence = this.calculateResponseMappingConfidence(a2aResponse, context);
-        // Handle different task states
-        let mcpResponse;
-        if (a2aResponse.state === a2a_types_1.A2ATaskState.COMPLETED && a2aResponse.output) {
-            // Success case - convert output to MCP format
-            mcpResponse = {
-                jsonrpc: '2.0',
-                id: originalRequest.id,
-                result: {
-                    content: this.convertMessagePartsToMCPContent(a2aResponse.output),
-                    isError: false
+    mapTaskToTool(taskRequest, _context) {
+        // Extract semantic intent
+        const intent = this.extractTaskCentricIntent(taskRequest);
+        // Build tool request
+        const tool = {
+            id: taskRequest.messageId || this.generateId(),
+            type: 'request',
+            paradigm: protocols_1.ProtocolParadigm.TOOL_CENTRIC,
+            timestamp: Date.now(),
+            payload: {
+                toolId: intent.target.identifier || taskRequest.task?.taskType,
+                toolName: taskRequest.task?.taskType || intent.target.identifier || 'unknown',
+                arguments: taskRequest.task?.input || {},
+                options: {
+                    timeout: taskRequest.task?.config?.timeout,
+                    retries: 3
                 }
-            };
-        }
-        else if (a2aResponse.state === a2a_types_1.A2ATaskState.FAILED && a2aResponse.error) {
-            // Error case
-            mcpResponse = {
-                jsonrpc: '2.0',
-                id: originalRequest.id,
-                error: {
-                    code: -32603, // Internal error per JSON-RPC
-                    message: a2aResponse.error.message,
-                    data: a2aResponse.error.details
-                }
-            };
-        }
-        else if (a2aResponse.state === a2a_types_1.A2ATaskState.RUNNING) {
-            // Still running - MCP doesn't support this, return progress message
-            mcpResponse = {
-                jsonrpc: '2.0',
-                id: originalRequest.id,
-                result: {
-                    content: [{
-                            type: 'text',
-                            text: `Task in progress: ${a2aResponse.progress?.message || 'Processing...'}`
-                        }],
-                    isError: false
-                }
-            };
-        }
-        else {
-            // Other states (PENDING, PAUSED, CANCELLED)
-            throw new translation_1.TranslationError(`Cannot map A2A task state '${a2aResponse.state}' to MCP response`, translation_1.TranslationErrorType.PROTOCOL, false);
-        }
-        return { response: mcpResponse, confidence };
-    }
-    /**
-     * Map A2A Agent Card to MCP Tools
-     *
-     * Converts agent capabilities to individual tools
-     */
-    mapA2AAgentToMCPTools(agentCard, _context) {
-        const tools = [];
-        const confidenceScores = [];
-        for (const capability of agentCard.capabilities) {
-            const tool = {
-                name: `${agentCard.agentId}.${capability.name}`,
-                description: `${capability.description} (Agent: ${agentCard.name})`,
-                inputSchema: capability.inputSchema
-            };
-            tools.push(tool);
-            // Calculate individual confidence
-            const capabilityConfidence = this.calculateCapabilityMappingConfidence(capability);
-            confidenceScores.push(capabilityConfidence);
-        }
-        // Average confidence across all capabilities
-        const averageConfidence = confidenceScores.reduce((a, b) => a + b, 0) / confidenceScores.length;
-        const confidence = {
-            score: averageConfidence,
-            factors: {
-                semanticMatch: averageConfidence,
-                structuralAlignment: 0.9, // Agent cards map well to tools
-                dataPreservation: 0.95, // Minimal data loss
-                contextRetention: 0.7 // Some context lost (rate limits, auth)
-            },
-            warnings: agentCard.metadata?.rateLimits
-                ? ['Rate limiting information not preserved in MCP tools']
-                : [],
-            lossyTranslation: false
+            }
         };
-        return { tools, confidence };
-    }
-    /**
-     * Convert MCP arguments to A2A message parts
-     */
-    convertArgumentsToMessageParts(args) {
-        if (!args || Object.keys(args).length === 0) {
-            return [{ type: 'text', text: 'No input provided' }];
+        // Calculate confidence
+        const confidence = this.calculateMappingConfidence(taskRequest, tool, intent, 'task-to-tool');
+        // Note: Some task features will be lost (streaming, state)
+        if (taskRequest.task?.config?.streaming) {
+            confidence.warnings.push('Streaming not supported in tool-centric paradigm');
+            confidence.lossyTranslation = true;
         }
-        const parts = [];
-        // Convert each argument to appropriate message part
-        for (const [key, value] of Object.entries(args)) {
-            if (typeof value === 'string') {
-                // Check if it's base64 image data
-                if (value.startsWith('data:image/')) {
-                    const [mimeTypePart, base64] = value.split(',');
-                    const mimeType = mimeTypePart?.replace('data:', '').replace(';base64', '') || 'image/png';
-                    parts.push({
-                        type: 'image',
-                        mimeType,
-                        data: base64 || ''
-                    });
-                }
-                else {
-                    parts.push({
-                        type: 'text',
-                        text: `${key}: ${value}`
-                    });
-                }
-            }
-            else if (typeof value === 'object') {
-                parts.push({
-                    type: 'data',
-                    mimeType: 'application/json',
-                    data: { [key]: value }
-                });
-            }
-            else {
-                parts.push({
-                    type: 'text',
-                    text: `${key}: ${String(value)}`
-                });
-            }
-        }
-        return parts;
+        return { tool, confidence };
     }
     /**
-     * Convert A2A message parts to MCP content
+     * Calculate confidence score for a translation
      */
-    convertMessagePartsToMCPContent(parts) {
-        return parts.map(part => {
-            switch (part.type) {
-                case 'text':
-                    return { type: 'text', text: part.text };
-                case 'image':
-                    return { type: 'image', data: part.data };
-                case 'file':
-                    return { type: 'resource', uri: part.uri };
-                case 'code':
-                    return {
-                        type: 'text',
-                        text: `\`\`\`${part.language}\n${part.code}\n\`\`\``
-                    };
-                case 'data':
-                    return {
-                        type: 'text',
-                        text: JSON.stringify(part.data, null, 2)
-                    };
-                default:
-                    return { type: 'text', text: 'Unknown content type' };
-            }
-        });
-    }
-    /**
-     * Calculate confidence score for tool mapping
-     */
-    calculateToolMappingConfidence(tool, _context) {
-        // Base confidence scores
-        let semanticMatch = 0.9; // Tools map well to capabilities
-        let structuralAlignment = 0.85;
-        let dataPreservation = 0.95;
-        let contextRetention = 0.8;
+    calculateMappingConfidence(source, target, _intent, direction) {
+        // Semantic similarity (40% weight)
+        const semanticMatch = this.calculateSemanticMatch(source, target, _intent);
+        // Structural alignment (20% weight)
+        const structuralAlignment = this.calculateStructuralAlignment(source, target);
+        // Data preservation (30% weight)
+        const dataPreservation = this.calculateDataPreservation(source, target);
+        // Context retention (10% weight)
+        const contextRetention = this.calculateContextRetention(source, target);
+        // Weighted score
+        const score = (semanticMatch * 0.4 +
+            structuralAlignment * 0.2 +
+            dataPreservation * 0.3 +
+            contextRetention * 0.1);
         const warnings = [];
-        // Check for complex input schemas
-        const schemaComplexity = this.calculateSchemaComplexity(tool.inputSchema);
-        if (schemaComplexity > 5) {
-            structuralAlignment *= 0.9;
-            warnings.push('Complex input schema may not map perfectly');
+        let lossyTranslation = false;
+        // Check for lossy translation
+        if (direction === 'task-to-tool') {
+            if (source.task?.config?.streaming) {
+                warnings.push('Streaming capability lost in translation');
+                lossyTranslation = true;
+            }
+            if (source.context?.conversationId) {
+                warnings.push('Conversation context partially preserved');
+            }
         }
-        // Check if tool name suggests streaming behavior
-        if (tool.name.includes('stream') || tool.name.includes('watch')) {
-            semanticMatch *= 0.8;
-            warnings.push('Streaming behavior may not translate well to A2A');
+        if (direction === 'tool-to-task') {
+            warnings.push('Synthesized state management for stateless protocol');
         }
-        // Calculate weighted score
-        const score = (semanticMatch * this.CONFIDENCE_WEIGHTS.semantic) +
-            (structuralAlignment * this.CONFIDENCE_WEIGHTS.structural) +
-            (dataPreservation * this.CONFIDENCE_WEIGHTS.data) +
-            (contextRetention * this.CONFIDENCE_WEIGHTS.context);
         return {
-            score,
+            score: Math.min(1.0, score),
             factors: {
                 semanticMatch,
                 structuralAlignment,
@@ -297,128 +182,278 @@ class SemanticMapper {
                 contextRetention
             },
             warnings,
-            lossyTranslation: score < this.CONFIDENCE_THRESHOLD
+            lossyTranslation
         };
     }
     /**
-     * Calculate confidence for request mapping
+     * Extract intent from tool-centric message
      */
-    calculateRequestMappingConfidence(request, context) {
-        // Start with high confidence for simple requests
-        let score = 0.95;
-        const warnings = [];
-        // Reduce confidence for complex arguments
-        if (request.params.arguments) {
-            const argCount = Object.keys(request.params.arguments).length;
-            if (argCount > 10) {
-                score *= 0.9;
-                warnings.push('Large number of arguments may affect translation accuracy');
+    extractToolCentricIntent(message) {
+        try {
+            const payload = message.payload || message;
+            // Validate tool information
+            if (!payload.toolName && !payload.name && !payload.toolId) {
+                throw new Error('Tool-centric message missing tool identifier');
             }
+            return {
+                action: 'execute',
+                target: {
+                    type: 'tool',
+                    identifier: payload.toolName || payload.name || payload.toolId,
+                    description: payload.description || `Execute ${payload.toolName || payload.name || payload.toolId}`
+                },
+                parameters: payload.arguments || {},
+                constraints: {
+                    timeout: payload.options?.timeout,
+                    priority: payload.options?.priority || 'normal'
+                },
+                context: {
+                    session: message.sessionId || payload.sessionId
+                }
+            };
         }
-        // Check context freshness
-        const lastTranslation = context.translationHistory[context.translationHistory.length - 1];
-        if (lastTranslation) {
-            const timeSinceLastMs = Date.now() - lastTranslation.timestamp;
-            if (timeSinceLastMs > 60000) { // Over 1 minute
-                score *= 0.95;
-                warnings.push('Context may be stale');
+        catch (error) {
+            console.warn('Error extracting tool-centric intent:', error);
+            throw error; // Re-throw to be caught by main extractSemanticIntent
+        }
+    }
+    /**
+     * Extract intent from task-centric message
+     */
+    extractTaskCentricIntent(message) {
+        try {
+            const task = message.task || message.payload?.task || message;
+            // Validate task information
+            if (!task.taskType && !task.type) {
+                throw new Error('Task-centric message missing task type');
             }
+            const taskType = task.taskType || task.type;
+            return {
+                action: this.inferAction(taskType),
+                target: {
+                    type: 'task',
+                    identifier: taskType,
+                    description: task.description || `Execute task: ${taskType}`
+                },
+                parameters: task.input || task.parameters || {},
+                constraints: {
+                    timeout: task.config?.timeout,
+                    priority: task.config?.priority || 'normal',
+                    quality: task.config?.quality
+                },
+                expectedOutcome: {
+                    type: task.outputType || task.config?.outputType || 'any',
+                    format: task.outputFormat || task.config?.outputFormat
+                },
+                context: {
+                    session: message.context?.sessionId || message.sessionId,
+                    conversation: message.context?.conversationId,
+                    user: message.context?.user
+                }
+            };
         }
-        return {
-            score,
-            factors: {
-                semanticMatch: score,
-                structuralAlignment: 0.9,
-                dataPreservation: 1.0,
-                contextRetention: score * 0.9
-            },
-            warnings,
-            lossyTranslation: false
+        catch (error) {
+            console.warn('Error extracting task-centric intent:', error);
+            throw error; // Re-throw to be caught by main extractSemanticIntent
+        }
+    }
+    /**
+     * Extract intent from function-calling message
+     */
+    extractFunctionCallingIntent(message) {
+        try {
+            const func = message.function || message.payload?.function || message.payload || message;
+            // Validate function information
+            if (!func.name && !func.functionName) {
+                throw new Error('Function-calling message missing function name');
+            }
+            return {
+                action: 'execute',
+                target: {
+                    type: 'function',
+                    identifier: func.name || func.functionName,
+                    description: func.description || `Call function: ${func.name || func.functionName}`
+                },
+                parameters: func.parameters || func.arguments || {},
+                constraints: {
+                    timeout: func.timeout
+                },
+                expectedOutcome: {
+                    type: func.returnType || func.returns || 'any'
+                },
+                context: {
+                    session: message.sessionId || func.sessionId
+                }
+            };
+        }
+        catch (error) {
+            console.warn('Error extracting function-calling intent:', error);
+            throw error; // Re-throw to be caught by main extractSemanticIntent
+        }
+    }
+    /**
+     * Extract generic intent as fallback
+     */
+    extractGenericIntent(message) {
+        try {
+            // Best effort extraction from unknown format
+            const payload = message.payload || message.data || message.body || message;
+            const identifier = message.id || message.messageId || message.requestId || 'unknown';
+            return {
+                action: 'other',
+                target: {
+                    type: 'unknown',
+                    identifier: identifier,
+                    description: message.description || message.type || 'Generic message'
+                },
+                parameters: typeof payload === 'object' ? payload : { data: payload },
+                constraints: {
+                    timeout: message.timeout || payload.timeout
+                },
+                context: {
+                    session: message.sessionId || message.session || payload.sessionId
+                }
+            };
+        }
+        catch (error) {
+            console.warn('Error extracting generic intent:', error);
+            // Return minimal valid intent
+            return {
+                action: 'other',
+                target: {
+                    type: 'error',
+                    identifier: 'extraction-failed',
+                    description: 'Failed to extract intent from message'
+                },
+                parameters: {},
+                context: {}
+            };
+        }
+    }
+    /**
+     * Infer action from task type
+     */
+    inferAction(taskType) {
+        const actionMap = {
+            'analyze': 'analyze',
+            'create': 'create',
+            'update': 'update',
+            'delete': 'delete',
+            'search': 'search',
+            'transform': 'transform',
+            'execute': 'execute',
+            'monitor': 'monitor'
         };
-    }
-    /**
-     * Calculate confidence for response mapping
-     */
-    calculateResponseMappingConfidence(response, _context) {
-        let score = 0.9;
-        const warnings = [];
-        // Check if we have complete output
-        if (response.state === a2a_types_1.A2ATaskState.COMPLETED && !response.output) {
-            score *= 0.7;
-            warnings.push('Task completed but no output provided');
-        }
-        // Check if progress information will be lost
-        if (response.progress) {
-            warnings.push('Progress information cannot be fully represented in MCP');
-        }
-        // Check if metadata will be lost
-        if (response.metadata?.resources) {
-            warnings.push('Resource usage metadata will not be preserved');
-        }
-        return {
-            score,
-            factors: {
-                semanticMatch: score,
-                structuralAlignment: 0.85,
-                dataPreservation: response.metadata ? 0.8 : 0.95,
-                contextRetention: 0.9
-            },
-            warnings,
-            lossyTranslation: warnings.length > 0
-        };
-    }
-    /**
-     * Calculate capability mapping confidence
-     */
-    calculateCapabilityMappingConfidence(capability) {
-        let confidence = 0.9;
-        // Reduce confidence for streaming capabilities
-        if (capability.streaming) {
-            confidence *= 0.85;
-        }
-        // Reduce confidence for complex output schemas
-        if (capability.outputSchema) {
-            const complexity = this.calculateSchemaComplexity(capability.outputSchema);
-            if (complexity > 3) {
-                confidence *= 0.9;
+        for (const [key, action] of Object.entries(actionMap)) {
+            if (taskType.toLowerCase().includes(key)) {
+                return action;
             }
         }
-        return confidence;
+        return 'other';
     }
     /**
-     * Calculate schema complexity (depth of nesting)
+     * Calculate semantic match score
      */
-    calculateSchemaComplexity(schema, depth = 0) {
-        if (!schema || typeof schema !== 'object')
-            return depth;
-        let maxDepth = depth;
-        if (schema.properties) {
-            for (const prop of Object.values(schema.properties)) {
-                const propDepth = this.calculateSchemaComplexity(prop, depth + 1);
-                maxDepth = Math.max(maxDepth, propDepth);
+    calculateSemanticMatch(source, target, _intent) {
+        // Check if core intent is preserved
+        let score = 0.8; // Base score if intent extracted
+        // Check parameter preservation
+        const sourceParams = Object.keys(source.payload?.arguments || source.input || {});
+        const targetParams = Object.keys(target.payload?.arguments || target.input || {});
+        const paramOverlap = sourceParams.filter(p => targetParams.includes(p)).length;
+        const paramScore = sourceParams.length > 0
+            ? paramOverlap / sourceParams.length
+            : 1.0;
+        score += paramScore * 0.2;
+        return Math.min(1.0, score);
+    }
+    /**
+     * Calculate structural alignment
+     */
+    calculateStructuralAlignment(source, target) {
+        // Simple heuristic: check field mapping completeness
+        const sourceFields = this.countFields(source);
+        const targetFields = this.countFields(target);
+        if (sourceFields === 0)
+            return 1.0;
+        const ratio = Math.min(targetFields / sourceFields, 1.0);
+        return ratio;
+    }
+    /**
+     * Calculate data preservation
+     */
+    calculateDataPreservation(source, target) {
+        // Check if all critical data is preserved
+        const sourceData = JSON.stringify(source.payload || source.task?.input || {});
+        const targetData = JSON.stringify(target.payload || target.task?.input || {});
+        // Simple size comparison (more sophisticated in production)
+        const preservation = Math.min(targetData.length / Math.max(sourceData.length, 1), 1.0);
+        return preservation;
+    }
+    /**
+     * Calculate context retention
+     */
+    calculateContextRetention(source, target) {
+        let score = 1.0;
+        // Check session preservation
+        if (source.sessionId || source.context?.sessionId) {
+            if (!target.sessionId && !target.context?.sessionId) {
+                score -= 0.3;
             }
         }
-        if (schema.items) {
-            const itemDepth = this.calculateSchemaComplexity(schema.items, depth + 1);
-            maxDepth = Math.max(maxDepth, itemDepth);
+        // Check correlation preservation
+        if (source.correlationId && !target.correlationId) {
+            score -= 0.2;
         }
-        return maxDepth;
+        return Math.max(0, score);
     }
     /**
-     * Infer agent ID from tool name and context
+     * Update shadow state for stateless protocols
      */
-    inferAgentId(toolName, context) {
-        // Check if tool name contains agent prefix
-        if (toolName.includes('.')) {
-            return toolName.split('.')[0] || 'default-agent';
+    updateShadowState(context, messageId, data) {
+        context.shadowState.set(messageId.toString(), {
+            timestamp: Date.now(),
+            data,
+            paradigm: context.targetParadigm
+        });
+        // Clean old entries (keep last 100)
+        if (context.shadowState && context.shadowState.size > 100) {
+            const entries = Array.from(context.shadowState.entries());
+            entries.sort((a, b) => a[1].timestamp - b[1].timestamp);
+            for (let i = 0; i < entries.length - 100; i++) {
+                const entry = entries[i];
+                if (entry) {
+                    context.shadowState.delete(entry[0]);
+                }
+            }
         }
-        // Check context for agent mapping
-        const agentMapping = context.metadata.a2a?.agentCards?.find((card) => card.capabilities.some((cap) => cap.name === toolName));
-        if (agentMapping) {
-            return agentMapping.agentId;
+    }
+    /**
+     * Count fields in an object (recursive)
+     */
+    countFields(obj, depth = 0, maxDepth = 3) {
+        if (depth > maxDepth || !obj || typeof obj !== 'object') {
+            return 0;
         }
-        // Default to generic agent
-        return 'default-agent';
+        let count = Object.keys(obj).length;
+        for (const value of Object.values(obj)) {
+            if (typeof value === 'object' && value !== null) {
+                count += this.countFields(value, depth + 1, maxDepth);
+            }
+        }
+        return count;
+    }
+    /**
+     * Generate unique message ID
+     */
+    generateMessageId() {
+        return `msg_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+    }
+    /**
+     * Generate unique ID
+     */
+    generateId() {
+        return `${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
     }
 }
 exports.SemanticMapper = SemanticMapper;

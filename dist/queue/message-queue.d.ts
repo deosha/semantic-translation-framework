@@ -1,164 +1,123 @@
 /**
- * Bidirectional Message Queue System
+ * Message Queue System
  *
- * Implements high-performance message queuing for async protocol translation
- * Based on paper Section III.A: Overall Architecture
+ * Handles asynchronous message processing, batching, and request ordering
+ * for the semantic translation framework. Ensures reliable message delivery
+ * and optimal throughput.
  *
- * Features:
- * - Priority-based message processing
- * - Backpressure handling
- * - Dead letter queue for failed messages
- * - Batch processing for efficiency
+ * Based on paper Section V.C: Performance Optimizations
  */
 import { EventEmitter } from 'events';
-import { TranslationConfidence } from '../types/translation';
+import { ProtocolMessage, ProtocolParadigm } from '../types/protocols';
+import { TranslationResult } from '../types/semantic-translation';
 /**
- * Message Priority Levels
+ * Message Queue Entry
  */
-export declare enum MessagePriority {
-    /** Critical messages that must be processed immediately */
-    CRITICAL = 0,
-    /** High priority messages */
-    HIGH = 1,
-    /** Normal priority (default) */
-    NORMAL = 2,
-    /** Low priority background tasks */
-    LOW = 3
-}
-/**
- * Queue Message Structure
- */
-export interface QueueMessage<T = any> {
-    /** Unique message ID */
+interface QueueEntry {
     id: string;
-    /** Message payload */
-    payload: T;
-    /** Translation direction */
-    direction: 'mcp-to-a2a' | 'a2a-to-mcp';
-    /** Message priority */
-    priority: MessagePriority;
-    /** Session ID for context */
-    sessionId: string;
-    /** Timestamp when message was enqueued */
-    enqueuedAt: number;
-    /** Number of processing attempts */
-    attempts: number;
-    /** Maximum retry attempts */
-    maxRetries: number;
-    /** Optional metadata */
-    metadata?: Record<string, any>;
+    message: ProtocolMessage;
+    targetParadigm: ProtocolParadigm;
+    priority: 'low' | 'normal' | 'high' | 'critical';
+    timestamp: number;
+    retries: number;
+    callback?: (result: TranslationResult) => void;
 }
 /**
- * Processing Result
+ * Batch Processing Result
  */
-export interface ProcessingResult<T = any> {
-    /** Whether processing was successful */
-    success: boolean;
-    /** Processed data */
-    data?: T;
-    /** Error if failed */
-    error?: Error;
-    /** Processing duration in ms */
-    processingTime: number;
-    /** Translation confidence if applicable */
-    confidence?: TranslationConfidence;
-}
-/**
- * Queue Statistics
- */
-export interface QueueStats {
-    /** Messages currently in queue */
-    pending: number;
-    /** Messages being processed */
-    active: number;
-    /** Successfully processed messages */
-    processed: number;
-    /** Failed messages */
+interface BatchResult {
+    successful: number;
     failed: number;
-    /** Messages in dead letter queue */
-    deadLetter: number;
-    /** Average processing time in ms */
-    avgProcessingTime: number;
-    /** Queue throughput (messages/second) */
-    throughput: number;
+    results: Map<string, TranslationResult>;
+    duration: number;
 }
 /**
  * Message Queue Configuration
  */
 export interface MessageQueueConfig {
-    /** Maximum concurrent processing */
+    /** Maximum concurrent translations */
     concurrency?: number;
-    /** Queue size limit */
-    maxQueueSize?: number;
-    /** Processing timeout in ms */
-    processingTimeout?: number;
-    /** Batch size for bulk processing */
+    /** Batch size for processing */
     batchSize?: number;
-    /** Enable dead letter queue */
-    enableDeadLetter?: boolean;
-    /** Max retries before dead letter */
+    /** Batch timeout in milliseconds */
+    batchTimeout?: number;
+    /** Maximum retries per message */
     maxRetries?: number;
-    /** Backpressure threshold (0-1) */
-    backpressureThreshold?: number;
+    /** Retry backoff in milliseconds */
+    retryBackoff?: number;
+    /** Enable priority queue */
+    priorityEnabled?: boolean;
+    /** Maximum queue size */
+    maxQueueSize?: number;
 }
 /**
- * Bidirectional Message Queue
+ * Message Queue
  *
- * Manages async message processing with priorities and batching
+ * Manages asynchronous translation requests with batching and prioritization
  */
 export declare class MessageQueue extends EventEmitter {
-    private mcpToA2aQueue;
-    private a2aToMcpQueue;
-    private deadLetterMcp;
-    private deadLetterA2a;
-    private processors;
+    private translateFn;
+    private queue;
     private config;
-    private stats;
-    private processingTimes;
-    constructor(config?: MessageQueueConfig);
+    private pendingBatch;
+    private batchTimer;
+    private messageStore;
+    private metrics;
+    constructor(translateFn: (message: ProtocolMessage, target: ProtocolParadigm) => Promise<TranslationResult>, config?: MessageQueueConfig);
     /**
-     * Register a message processor
+     * Enqueue a message for translation
      */
-    registerProcessor(direction: 'mcp-to-a2a' | 'a2a-to-mcp', processor: (msg: QueueMessage) => Promise<ProcessingResult>): void;
-    /**
-     * Enqueue a message for processing
-     */
-    enqueue<T>(payload: T, direction: 'mcp-to-a2a' | 'a2a-to-mcp', options?: {
-        priority?: MessagePriority;
-        sessionId?: string;
-        metadata?: Record<string, any>;
-        maxRetries?: number;
-    }): Promise<string>;
+    enqueue(message: ProtocolMessage, targetParadigm: ProtocolParadigm, priority?: QueueEntry['priority']): Promise<TranslationResult>;
     /**
      * Enqueue multiple messages for batch processing
      */
-    enqueueBatch<T>(messages: Array<{
-        payload: T;
-        direction: 'mcp-to-a2a' | 'a2a-to-mcp';
-        priority?: MessagePriority;
-    }>): Promise<string[]>;
+    enqueueBatch(messages: Array<{
+        message: ProtocolMessage;
+        targetParadigm: ProtocolParadigm;
+        priority?: QueueEntry['priority'];
+    }>): Promise<BatchResult>;
     /**
-     * Process a message
+     * Process message immediately (for critical priority)
      */
-    private processMessage;
+    private processImmediate;
     /**
-     * Move message to dead letter queue
+     * Add message to batch
      */
-    private moveToDeadLetter;
+    private addToBatch;
     /**
-     * Reprocess dead letter messages
+     * Process pending batch
      */
-    reprocessDeadLetter(direction: 'mcp-to-a2a' | 'a2a-to-mcp', messageIds?: string[]): Promise<number>;
+    private processBatch;
     /**
-     * Get queue statistics
+     * Process a single queue entry
      */
-    getStats(): QueueStats;
+    private processEntry;
     /**
-     * Check if queue is experiencing backpressure
+     * Get numeric priority value
      */
-    private isBackpressured;
+    private getPriorityValue;
     /**
-     * Clear all queues
+     * Update average latency metric
+     */
+    private updateAverageLatency;
+    /**
+     * Setup queue event handlers
+     */
+    private setupQueueHandlers;
+    /**
+     * Get queue metrics
+     */
+    getMetrics(): {
+        queueDepth: number;
+        pendingBatch: number;
+        activeWorkers: number;
+        totalEnqueued: number;
+        totalProcessed: number;
+        totalFailed: number;
+        averageLatency: number;
+    };
+    /**
+     * Clear the queue
      */
     clear(): Promise<void>;
     /**
@@ -170,13 +129,21 @@ export declare class MessageQueue extends EventEmitter {
      */
     resume(): void;
     /**
-     * Shutdown queue
+     * Wait for queue to be empty
      */
-    shutdown(): Promise<void>;
-    private generateMessageId;
-    private recordProcessingTime;
-    private setupQueueHandlers;
-    private startStatsReporting;
-    private sleep;
+    onIdle(): Promise<void>;
+    /**
+     * Get queue size
+     */
+    get size(): number;
+    /**
+     * Get pending count
+     */
+    get pending(): number;
+    /**
+     * Generate unique ID
+     */
+    private generateId;
 }
+export {};
 //# sourceMappingURL=message-queue.d.ts.map

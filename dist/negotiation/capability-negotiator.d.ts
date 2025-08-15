@@ -1,134 +1,89 @@
 /**
- * Protocol Capability Negotiation Layer
+ * Capability Negotiator
  *
- * Dynamically negotiates and advertises capabilities between MCP and A2A protocols
- * Based on paper Section IV.C: Production Deployment Considerations
+ * Automatically discovers and negotiates capabilities between different
+ * protocol paradigms, generating fallback strategies for incompatible features.
  *
- * Features:
- * - Automatic capability discovery
- * - Feature compatibility checking
- * - Fallback strategy determination
- * - Version negotiation
+ * Based on paper Section IV.E: Capability Negotiation
  */
-import { EventEmitter } from 'events';
-import { MCPTool, MCPResource, MCPPrompt } from '../protocols/mcp.types';
-import { A2AAgentCard } from '../protocols/a2a.types';
-/**
- * Protocol Capability
- */
-export interface ProtocolCapability {
-    /** Capability name */
-    name: string;
-    /** Capability version */
-    version: string;
-    /** Whether this capability is required */
-    required: boolean;
-    /** Supported features */
-    features: string[];
-    /** Metadata */
-    metadata?: Record<string, any>;
-}
-/**
- * Negotiation Result
- */
-export interface NegotiationResult {
-    /** Whether negotiation was successful */
-    success: boolean;
-    /** Negotiated capabilities */
-    capabilities: ProtocolCapability[];
-    /** Compatibility score (0-1) */
-    compatibility: number;
-    /** Features that require fallback */
-    fallbacks: Array<{
-        feature: string;
-        strategy: string;
-        confidence: number;
-    }>;
-    /** Warnings about compatibility issues */
-    warnings: string[];
-    /** Recommended configuration */
-    recommendations: Record<string, any>;
-}
-/**
- * Protocol Manifest
- */
-export interface ProtocolManifest {
-    /** Protocol name */
-    protocol: 'mcp' | 'a2a';
-    /** Protocol version */
-    version: string;
-    /** Supported capabilities */
-    capabilities: ProtocolCapability[];
-    /** Feature flags */
-    features: {
-        streaming?: boolean;
-        batching?: boolean;
-        compression?: boolean;
-        encryption?: boolean;
-        stateful?: boolean;
-        multiModal?: boolean;
-        contextAware?: boolean;
-    };
-    /** Performance characteristics */
-    performance?: {
-        maxConcurrency?: number;
-        maxMessageSize?: number;
-        timeout?: number;
-        rateLimit?: number;
-    };
-    /** Authentication requirements */
-    authentication?: {
-        type: 'none' | 'api-key' | 'oauth2' | 'custom';
-        required: boolean;
-    };
-}
+import { ProtocolFeatures, ProtocolManifest } from '../types/protocols';
+import { CapabilityGap, NegotiationResult } from '../types/semantic-translation';
 /**
  * Capability Negotiator
  *
- * Handles dynamic capability discovery and negotiation
+ * Handles protocol capability discovery and fallback generation
  */
-export declare class CapabilityNegotiator extends EventEmitter {
-    private mcpManifest;
-    private a2aManifest;
-    private mappings;
-    private negotiationCache;
-    private compatibilityMatrix;
+export declare class CapabilityNegotiator {
+    private fallbackStrategies;
+    private capabilityCache;
     constructor();
     /**
-     * Discover MCP capabilities
+     * Negotiate capabilities between two protocol paradigms
      */
-    discoverMCPCapabilities(tools?: MCPTool[], resources?: MCPResource[], prompts?: MCPPrompt[]): Promise<ProtocolManifest>;
+    negotiate(sourceManifest: ProtocolManifest, targetManifest: ProtocolManifest): Promise<NegotiationResult>;
     /**
-     * Discover A2A capabilities
+     * Identify capability gaps between protocols
      */
-    discoverA2ACapabilities(agentCards?: A2AAgentCard[]): Promise<ProtocolManifest>;
+    identifyCapabilityGaps(sourceFeatures: ProtocolFeatures, targetFeatures: ProtocolFeatures): CapabilityGap[];
     /**
-     * Negotiate capabilities between protocols
+     * Generate fallback strategies for capability gaps
      */
-    negotiate(mcpManifest?: ProtocolManifest, a2aManifest?: ProtocolManifest): Promise<NegotiationResult>;
+    private generateFallbackStrategies;
     /**
-     * Check if a specific capability is supported
+     * Calculate overall compatibility score
      */
-    isCapabilitySupported(capability: string, protocol: 'mcp' | 'a2a'): boolean;
-    /**
-     * Get fallback strategy for unsupported capability
-     */
-    getFallbackStrategy(capability: string, sourceProtocol: 'mcp' | 'a2a'): {
-        strategy: string;
-        confidence: number;
-    } | null;
-    /**
-     * Update capability mapping
-     */
-    updateMapping(source: string, target: string, confidence: number, transformations?: string[]): void;
-    /**
-     * Get compatibility score between two capabilities
-     */
-    getCompatibilityScore(mcpCapability: string, a2aCapability: string): number;
-    private initializeDefaultMappings;
-    private negotiateFeatures;
-    private findBestMapping;
-    private calculateMappingConfidence;
     private calculateCompatibility;
+    /**
+     * Find compatible capabilities between protocols
+     */
+    private findCompatibleCapabilities;
+    /**
+     * Compare two capabilities for compatibility
+     */
+    private compareCapabilities;
+    /**
+     * Check if two names are similar
+     */
+    private areNamesSimilar;
+    /**
+     * Check if constraints are compatible
+     */
+    private constraintsCompatible;
+    /**
+     * Get paradigm compatibility score
+     */
+    private getParadigmCompatibility;
+    /**
+     * Assess severity of a capability gap
+     */
+    private assessSeverity;
+    /**
+     * Get penalty for a capability gap
+     */
+    private getGapPenalty;
+    /**
+     * Get fallback strategies for a specific feature
+     */
+    private getFallbacksForFeature;
+    /**
+     * Create generic fallback for unknown features
+     */
+    private createGenericFallback;
+    /**
+     * Generate warnings based on gaps and fallbacks
+     */
+    private generateWarnings;
+    /**
+     * Generate recommendations for improving compatibility
+     */
+    private generateRecommendations;
+    /**
+     * Initialize built-in fallback strategies
+     */
+    private initializeFallbackStrategies;
+    /**
+     * Clear capability cache
+     */
+    clearCache(): void;
 }
 //# sourceMappingURL=capability-negotiator.d.ts.map
