@@ -9,7 +9,7 @@
  * Achieves 85%+ hit rates through intelligent key generation and cache warming
  */
 import { EventEmitter } from 'events';
-import { TranslationContext, TranslationConfidence } from '../types/translation';
+import { SemanticTranslationContext as TranslationContext, TranslationConfidence } from '../types/semantic-translation';
 /**
  * Cache Entry Structure
  */

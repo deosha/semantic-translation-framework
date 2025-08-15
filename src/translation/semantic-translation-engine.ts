@@ -199,7 +199,7 @@ export class SemanticTranslationEngine extends EventEmitter {
     const targetFeatures = targetAdapter.manifest.features;
     
     // Identify compatible capabilities
-    const compatible = [];
+    const compatible: any[] = [];
     const fallbacks: FallbackStrategy[] = [];
     
     // Check streaming support
@@ -282,6 +282,7 @@ export class SemanticTranslationEngine extends EventEmitter {
     targetParadigm: ProtocolParadigm,
     context: SemanticTranslationContext
   ): Promise<TranslationResult> {
+    const operationStartTime = Date.now();
     let lastError: SemanticTranslationError | undefined;
     let retryCount = 0;
     
@@ -366,7 +367,7 @@ export class SemanticTranslationEngine extends EventEmitter {
           data: targetMessage,
           confidence,
           metrics: {
-            latencyMs: Date.now() - sourceMessage.timestamp,
+            latencyMs: Date.now() - operationStartTime,
             cacheHit: false,
             retries: retryCount,
             fallbacksUsed
@@ -411,7 +412,7 @@ export class SemanticTranslationEngine extends EventEmitter {
         lossyTranslation: true
       },
       metrics: {
-        latencyMs: Date.now() - sourceMessage.timestamp,
+        latencyMs: Date.now() - operationStartTime,
         cacheHit: false,
         retries: retryCount,
         fallbacksUsed: []
@@ -509,7 +510,7 @@ export class SemanticTranslationEngine extends EventEmitter {
     sourceParadigm: ProtocolParadigm,
     targetParadigm: ProtocolParadigm
   ): Promise<any[]> {
-    const gaps = [];
+    const gaps: any[] = [];
     
     const sourceAdapter = this.adapters.get(sourceParadigm);
     const targetAdapter = this.adapters.get(targetParadigm);

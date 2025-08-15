@@ -347,7 +347,7 @@ class CapabilityNegotiator {
     /**
      * Generate recommendations for improving compatibility
      */
-    generateRecommendations(gaps, fallbacks, compatibility) {
+    generateRecommendations(gaps, _fallbacks, compatibility) {
         const recommendations = {};
         if (compatibility < 0.5) {
             recommendations.warning = 'Low compatibility - consider alternative protocols';

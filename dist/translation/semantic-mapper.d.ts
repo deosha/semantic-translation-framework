@@ -60,6 +60,10 @@ export declare class SemanticMapper {
      */
     private extractGenericIntent;
     /**
+     * Infer source from tool name
+     */
+    private inferSourceFromTool;
+    /**
      * Infer action from task type
      */
     private inferAction;
@@ -91,9 +95,5 @@ export declare class SemanticMapper {
      * Generate unique message ID
      */
     private generateMessageId;
-    /**
-     * Generate unique ID
-     */
-    private generateId;
 }
 //# sourceMappingURL=semantic-mapper.d.ts.map

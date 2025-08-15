@@ -266,7 +266,7 @@ class CacheManager extends events_1.EventEmitter {
             direction,
             // Include relevant context that affects translation
             contextId: context?.sessionId,
-            contextState: context?.sessionState.size || 0
+            contextState: context?.shadowState?.size || 0
         };
         const hash = (0, crypto_1.createHash)('sha256')
             .update(JSON.stringify(keyData))

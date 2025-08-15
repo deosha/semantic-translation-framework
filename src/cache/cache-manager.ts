@@ -13,9 +13,9 @@ import Redis from 'ioredis';
 import { createHash } from 'crypto';
 import { EventEmitter } from 'events';
 import { 
-  TranslationContext,
+  SemanticTranslationContext as TranslationContext,
   TranslationConfidence 
-} from '../types/translation';
+} from '../types/semantic-translation';
 
 /**
  * Cache Entry Structure
@@ -378,7 +378,7 @@ export class CacheManager extends EventEmitter {
       direction,
       // Include relevant context that affects translation
       contextId: context?.sessionId,
-      contextState: context?.sessionState.size || 0
+      contextState: context?.shadowState?.size || 0
     };
     
     const hash = createHash('sha256')

@@ -354,7 +354,6 @@ export function toGenericTask(
     progress: response?.task.progress,
     error: response?.task.error,
     metadata: {
-      paradigm: ProtocolParadigm.TASK_CENTRIC,
       createdAt: request.metadata?.timestamp || Date.now(),
       updatedAt: response?.metadata?.timestamp || Date.now(),
       sessionId: request.context?.sessionId,
@@ -379,7 +378,7 @@ export function fromGenericTask(task: TaskDefinition): TaskRequest {
       input: task.input,
       config: {
         priority: task.metadata?.priority as any,
-        timeout: task.metadata?.timeout,
+        timeout: (task.metadata as any)?.timeout,
       }
     },
     context: {

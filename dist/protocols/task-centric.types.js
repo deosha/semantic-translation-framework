@@ -16,7 +16,6 @@ exports.AgentDiscoveryResponseSchema = exports.AgentDiscoveryRequestSchema = exp
 exports.toGenericTask = toGenericTask;
 exports.fromGenericTask = fromGenericTask;
 const zod_1 = require("zod");
-const protocols_1 = require("../types/protocols");
 /**
  * Agent Capability Card
  *
@@ -221,7 +220,6 @@ function toGenericTask(request, response) {
         progress: response?.task.progress,
         error: response?.task.error,
         metadata: {
-            paradigm: protocols_1.ProtocolParadigm.TASK_CENTRIC,
             createdAt: request.metadata?.timestamp || Date.now(),
             updatedAt: response?.metadata?.timestamp || Date.now(),
             sessionId: request.context?.sessionId,

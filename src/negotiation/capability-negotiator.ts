@@ -228,7 +228,7 @@ export class CapabilityNegotiator {
     
     for (const [key, value] of Object.entries(sourceFeatures)) {
       totalFeatures++;
-      if (targetFeatures[key] === value) {
+      if ((targetFeatures as any)[key] === value) {
         featureMatches++;
       }
     }
@@ -462,7 +462,7 @@ export class CapabilityNegotiator {
    */
   private generateRecommendations(
     gaps: CapabilityGap[],
-    fallbacks: FallbackStrategy[],
+    _fallbacks: FallbackStrategy[],
     compatibility: number
   ): Record<string, any> {
     const recommendations: Record<string, any> = {};

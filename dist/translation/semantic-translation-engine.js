@@ -177,6 +177,7 @@ class SemanticTranslationEngine extends events_1.EventEmitter {
     }
     // Private helper methods
     async performTranslationWithRetries(sourceMessage, targetParadigm, context) {
+        const operationStartTime = Date.now();
         let lastError;
         let retryCount = 0;
         for (let attempt = 0; attempt <= this.config.maxRetries; attempt++) {
@@ -233,7 +234,7 @@ class SemanticTranslationEngine extends events_1.EventEmitter {
                     data: targetMessage,
                     confidence,
                     metrics: {
-                        latencyMs: Date.now() - sourceMessage.timestamp,
+                        latencyMs: Date.now() - operationStartTime,
                         cacheHit: false,
                         retries: retryCount,
                         fallbacksUsed
@@ -272,7 +273,7 @@ class SemanticTranslationEngine extends events_1.EventEmitter {
                 lossyTranslation: true
             },
             metrics: {
-                latencyMs: Date.now() - sourceMessage.timestamp,
+                latencyMs: Date.now() - operationStartTime,
                 cacheHit: false,
                 retries: retryCount,
                 fallbacksUsed: []

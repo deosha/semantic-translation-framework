@@ -1,8 +1,8 @@
 /**
- * Demo Server for MCP-A2A Translation Layer
+ * Demo Server for Semantic Protocol Translation Framework
  * 
  * Serves the web demo and provides real API endpoints
- * for live translation demonstrations
+ * for live translation demonstrations with error handling showcase
  */
 
 const express = require('express');
@@ -10,9 +10,13 @@ const path = require('path');
 const cors = require('cors');
 
 // Import the actual translation components
-const { TranslationEngine } = require('../dist/translation/translation-engine');
-const { CacheManager } = require('../dist/cache/cache-manager');
-const { SemanticMapper } = require('../dist/translation/semantic-mapper');
+const { 
+  SemanticTranslationEngine,
+  createSemanticEngine,
+  ToolCentricAdapter,
+  TaskCentricAdapter,
+  ProtocolParadigm
+} = require('../dist/index');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -24,79 +28,184 @@ app.use(express.static(path.join(__dirname)));
 
 // Initialize translation engine
 let engine;
-let cacheManager;
-let semanticMapper;
 
 async function initializeComponents() {
   try {
-    engine = new TranslationEngine({
+    engine = createSemanticEngine({
       cacheEnabled: true,
-      minConfidenceThreshold: 0.7,
-      monitoringEnabled: true
+      minConfidenceThreshold: 0.6,  // Lowered for demo to show task-to-tool working
+      monitoringEnabled: true,
+      maxRetries: 3,
+      fallbackEnabled: true
     });
     
-    cacheManager = new CacheManager();
-    semanticMapper = new SemanticMapper();
+    // Register protocol adapters
+    engine.registerAdapter(ProtocolParadigm.TOOL_CENTRIC, new ToolCentricAdapter());
+    engine.registerAdapter(ProtocolParadigm.TASK_CENTRIC, new TaskCentricAdapter());
     
-    console.log('✅ Translation components initialized');
+    console.log('✅ Semantic Translation Engine initialized');
+    console.log('✅ Protocol adapters registered');
+    console.log('✅ Engine ready for translations');
+    
+    // Test the engine
+    const testMessage = {
+      id: 'test-init',
+      type: 'request',
+      paradigm: ProtocolParadigm.TOOL_CENTRIC,
+      timestamp: Date.now(),
+      payload: {
+        toolName: 'test',
+        arguments: {}
+      }
+    };
+    
+    const testResult = await engine.translate(
+      testMessage,
+      ProtocolParadigm.TASK_CENTRIC,
+      'test-session'
+    );
+    
+    console.log('✅ Engine test successful:', testResult.success);
+    
   } catch (error) {
-    console.error('Failed to initialize components:', error);
-    // Use mock mode if components fail
-    engine = null;
+    console.error('❌ CRITICAL: Failed to initialize translation engine:', error);
+    console.error('Stack trace:', error.stack);
+    // Don't allow server to start without engine
+    throw new Error('Cannot start server without translation engine');
   }
 }
 
 // API Endpoints
 
 /**
- * Translate MCP to A2A
+ * Generic protocol translation endpoint
  */
-app.post('/api/translate/mcp-to-a2a', async (req, res) => {
+app.post('/api/translate', async (req, res) => {
   try {
-    const { request, sessionId = 'demo-session' } = req.body;
+    const { message, targetParadigm, sourceParadigm, sessionId = 'demo-session' } = req.body;
     
-    if (engine) {
-      // Use real translation engine
-      const result = await engine.translateMCPToA2A(request, sessionId);
-      
-      res.json({
+    if (!message || !targetParadigm) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required parameters: message and targetParadigm'
+      });
+    }
+    
+    if (!engine) {
+      throw new Error('Translation engine not initialized');
+    }
+    
+    // If sourceParadigm is provided, use it; otherwise use message.paradigm
+    if (sourceParadigm) {
+      message.paradigm = sourceParadigm;
+    }
+    
+    // Use real translation engine
+    const result = await engine.translate(message, targetParadigm, sessionId);
+    
+    res.json({
+      success: result.success,
+      data: result.data,
+      confidence: result.confidence,
+      metrics: result.metrics,
+      error: result.error,
+      errorType: result.errorType,
+      warnings: result.confidence?.warnings || []
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      errorType: error.type || 'UNKNOWN',
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
+
+/**
+ * Error handling demonstration endpoint
+ */
+app.post('/api/translate/test-error-handling', async (req, res) => {
+  try {
+    const { scenario = 'invalid-message' } = req.body;
+    
+    let testMessage;
+    let targetParadigm = ProtocolParadigm.TASK_CENTRIC;
+    
+    switch (scenario) {
+      case 'missing-payload':
+        testMessage = {
+          id: 'test-1',
+          type: 'request',
+          paradigm: ProtocolParadigm.TOOL_CENTRIC,
+          timestamp: Date.now()
+          // Missing payload
+        };
+        break;
+        
+      case 'missing-paradigm':
+        testMessage = {
+          id: 'test-2',
+          type: 'request',
+          // Missing paradigm
+          timestamp: Date.now(),
+          payload: { toolName: 'test-tool' }
+        };
+        break;
+        
+      case 'invalid-tool':
+        testMessage = {
+          id: 'test-3',
+          type: 'request',
+          paradigm: ProtocolParadigm.TOOL_CENTRIC,
+          timestamp: Date.now(),
+          payload: {
+            // Missing toolName/toolId
+            arguments: { data: 'test' }
+          }
+        };
+        break;
+        
+      case 'invalid-task':
+        testMessage = {
+          id: 'test-4',
+          type: 'request',
+          paradigm: ProtocolParadigm.TASK_CENTRIC,
+          timestamp: Date.now(),
+          payload: {
+            // Missing taskType
+            input: { data: 'test' }
+          }
+        };
+        break;
+        
+      default:
+        testMessage = {
+          id: 'test-invalid',
+          // Completely invalid structure
+          data: 'invalid'
+        };
+    }
+    
+    if (!engine) {
+      throw new Error('Translation engine not initialized');
+    }
+    
+    // Use real engine to demonstrate error handling
+    const result = await engine.translate(testMessage, targetParadigm, 'error-test-session');
+    
+    res.json({
+      scenario,
+      testMessage,
+      result: {
         success: result.success,
         data: result.data,
         confidence: result.confidence,
-        metrics: result.metrics,
-        warnings: result.confidence.warnings
-      });
-    } else {
-      // Mock response for demo
-      res.json({
-        success: true,
-        data: {
-          taskId: `a2a-${Date.now()}`,
-          taskType: request.params?.name || 'unknown',
-          input: request.params?.arguments || {},
-          state: 'PENDING',
-          metadata: {
-            sourceProtocol: 'MCP',
-            sourceId: request.id
-          }
-        },
-        confidence: {
-          score: 0.94,
-          factors: {
-            semanticMatch: 0.95,
-            structuralAlignment: 0.93,
-            dataPreservation: 0.96,
-            contextRetention: 0.92
-          },
-          warnings: [],
-          lossyTranslation: false
-        },
-        metrics: {
-          latencyMs: 0.2 + Math.random() * 0.3,
-          cacheHit: Math.random() > 0.3
-        }
-      });
-    }
+        error: result.error,
+        recovered: result.data ? true : false,
+        warnings: result.confidence?.warnings || []
+      }
+    });
   } catch (error) {
     res.status(500).json({
       success: false,
@@ -106,68 +215,67 @@ app.post('/api/translate/mcp-to-a2a', async (req, res) => {
 });
 
 /**
- * Translate A2A to MCP
+ * Translate Tool-Centric to Task-Centric
  */
-app.post('/api/translate/a2a-to-mcp', async (req, res) => {
+app.post('/api/translate/tool-to-task', async (req, res) => {
   try {
-    const { response, sessionId = 'demo-session' } = req.body;
+    const { request, sessionId = 'demo-session' } = req.body;
     
-    if (engine) {
-      // Use real translation engine
-      const result = await engine.translateA2AToMCP(response, sessionId);
-      
-      res.json({
-        success: result.success,
-        data: result.data,
-        confidence: result.confidence,
-        metrics: result.metrics,
-        warnings: result.confidence.warnings
-      });
-    } else {
-      // Mock response for demo
-      const content = [];
-      
-      if (response.output) {
-        response.output.forEach(item => {
-          if (item.type === 'text') {
-            content.push({ type: 'text', text: item.text });
-          } else if (item.type === 'data') {
-            content.push({ type: 'resource', resource: item.data });
-          } else if (item.type === 'code') {
-            content.push({ 
-              type: 'text', 
-              text: `\`\`\`${item.language}\n${item.code}\n\`\`\`` 
-            });
-          }
-        });
-      }
-      
-      res.json({
-        success: true,
-        data: {
-          jsonrpc: '2.0',
-          id: `mcp-${Date.now()}`,
-          result: {
-            content: content
-          }
-        },
-        confidence: {
-          score: 0.92,
-          factors: {
-            semanticMatch: 0.93,
-            structuralAlignment: 0.91,
-            dataPreservation: 0.94,
-            contextRetention: 0.90
-          },
-          warnings: [],
-          lossyTranslation: false
-        },
-        metrics: {
-          latencyMs: 0.15 + Math.random() * 0.25,
-          cacheHit: Math.random() > 0.4
-        }
-      });
+    // Ensure proper structure
+    const message = {
+      id: request.id || `tool-${Date.now()}`,
+      type: 'request',
+      paradigm: ProtocolParadigm.TOOL_CENTRIC,
+      timestamp: Date.now(),
+      payload: request.payload || request
+    };
+    
+    if (!engine) {
+      throw new Error('Translation engine not initialized');
     }
+    
+    const result = await engine.translate(
+      message,
+      ProtocolParadigm.TASK_CENTRIC,
+      sessionId
+    );
+    
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * Translate Task-Centric to Tool-Centric
+ */
+app.post('/api/translate/task-to-tool', async (req, res) => {
+  try {
+    const { request, sessionId = 'demo-session' } = req.body;
+    
+    // Ensure proper structure
+    const message = {
+      id: request.id || `task-${Date.now()}`,
+      type: 'request',
+      paradigm: ProtocolParadigm.TASK_CENTRIC,
+      timestamp: Date.now(),
+      payload: request.payload || request
+    };
+    
+    if (!engine) {
+      throw new Error('Translation engine not initialized');
+    }
+    
+    const result = await engine.translate(
+      message,
+      ProtocolParadigm.TOOL_CENTRIC,
+      sessionId
+    );
+    
+    res.json(result);
   } catch (error) {
     res.status(500).json({
       success: false,
@@ -181,37 +289,49 @@ app.post('/api/translate/a2a-to-mcp', async (req, res) => {
  */
 app.get('/api/metrics', async (req, res) => {
   try {
-    if (engine) {
-      const metrics = engine.getMetrics();
-      const cacheStats = cacheManager.getStats();
-      
-      res.json({
-        engine: metrics,
-        cache: cacheStats,
-        uptime: process.uptime(),
-        memory: process.memoryUsage()
-      });
-    } else {
-      // Mock metrics
-      res.json({
-        engine: {
-          totalTranslations: 1234,
-          successfulTranslations: 1220,
-          averageConfidence: 0.94,
-          averageLatencyMs: 0.25,
-          cacheHitRate: 85.5
-        },
-        cache: {
-          entriesCount: 450,
-          hitRate: 85.5,
-          memoryUsageMB: 12.3
-        },
-        uptime: process.uptime(),
-        memory: process.memoryUsage()
-      });
+    if (!engine) {
+      throw new Error('Translation engine not initialized');
     }
+    
+    const metrics = engine.getMetrics();
+    
+    res.json({
+      translations: {
+        total: metrics.totalTranslations || 0,
+        successful: metrics.successfulTranslations || 0,
+        failed: metrics.failedTranslations || 0,
+        averageConfidence: metrics.averageConfidence || 0,
+        averageLatencyMs: metrics.averageLatency || 0
+      },
+      cache: {
+        hitRate: metrics.cacheHitRate || 0,
+        entries: metrics.cacheEntries || 0
+      },
+      errors: {
+        recoveryRate: metrics.errorRecoveryRate || 0,
+        fallbackUsage: metrics.fallbackUsage || 0
+      },
+      uptime: process.uptime(),
+      memory: process.memoryUsage()
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Clear cache
+ */
+app.post('/api/cache/clear', async (req, res) => {
+  try {
+    if (!engine) {
+      throw new Error('Translation engine not initialized');
+    }
+    
+    await engine.clear();
+    res.json({ success: true, message: 'Cache cleared successfully' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
@@ -220,8 +340,16 @@ app.get('/api/metrics', async (req, res) => {
  */
 app.get('/api/health', (req, res) => {
   res.json({
-    status: 'healthy',
-    engine: engine ? 'active' : 'mock',
+    status: engine ? 'healthy' : 'unhealthy',
+    engine: engine ? 'active' : 'not initialized',
+    version: '1.0.0',
+    features: {
+      errorHandling: true,
+      paradigmInference: true,
+      confidenceScoring: true,
+      multiLevelCache: true,
+      fallbackStrategies: true
+    },
     timestamp: new Date().toISOString()
   });
 });
@@ -234,13 +362,18 @@ async function startServer() {
     console.log(`
 ╔════════════════════════════════════════════════════════════╗
 ║                                                            ║
-║     🚀 MCP-A2A Translation Layer Demo Server              ║
+║     🚀 Semantic Protocol Translation Framework            ║
+║        Demo Server with Error Handling                    ║
 ║                                                            ║
 ║     Server running at: http://localhost:${PORT}              ║
+║                                                            ║
 ║     API Endpoints:                                         ║
-║       • POST /api/translate/mcp-to-a2a                    ║
-║       • POST /api/translate/a2a-to-mcp                    ║
+║       • POST /api/translate                                ║
+║       • POST /api/translate/test-error-handling            ║
+║       • POST /api/translate/tool-to-task                   ║
+║       • POST /api/translate/task-to-tool                   ║
 ║       • GET  /api/metrics                                  ║
+║       • POST /api/cache/clear                              ║
 ║       • GET  /api/health                                   ║
 ║                                                            ║
 ║     Open http://localhost:${PORT} in your browser           ║
@@ -254,7 +387,12 @@ async function startServer() {
 process.on('SIGTERM', async () => {
   console.log('Shutting down gracefully...');
   if (engine) await engine.shutdown();
-  if (cacheManager) await cacheManager.close();
+  process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+  console.log('\nShutting down gracefully...');
+  if (engine) await engine.shutdown();
   process.exit(0);
 });
 

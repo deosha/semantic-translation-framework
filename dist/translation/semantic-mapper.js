@@ -89,7 +89,7 @@ class SemanticMapper {
     mapToolToTask(toolRequest, context) {
         // Extract semantic intent
         const intent = this.extractToolCentricIntent(toolRequest);
-        // Build task request
+        // Build task request with proper task-centric structure
         const task = {
             id: this.generateMessageId(),
             type: 'request',
@@ -97,12 +97,23 @@ class SemanticMapper {
             timestamp: Date.now(),
             payload: {
                 taskType: intent.target.identifier || toolRequest.payload.toolName,
-                input: intent.parameters,
+                input: {
+                    // Map tool arguments to task input structure
+                    ...intent.parameters,
+                    source: this.inferSourceFromTool(toolRequest.payload.toolName),
+                    options: toolRequest.payload.options || {}
+                },
                 context: {
                     conversationId: context.sessionId,
-                    sessionVariables: context.conversationContext?.variables
+                    sessionVariables: context.conversationContext?.variables || {}
+                },
+                config: {
+                    timeout: toolRequest.payload.options?.timeout,
+                    priority: 'normal',
+                    streaming: false
                 }
-            }
+            },
+            sessionId: context.sessionId
         };
         // Calculate confidence
         const confidence = this.calculateMappingConfidence(toolRequest, task, intent, 'tool-to-task');
@@ -116,20 +127,37 @@ class SemanticMapper {
     mapTaskToTool(taskRequest, _context) {
         // Extract semantic intent
         const intent = this.extractTaskCentricIntent(taskRequest);
+        // Extract from payload structure
+        const taskPayload = taskRequest.payload || taskRequest;
+        const taskType = taskPayload.taskType || taskRequest.task?.taskType;
+        const input = taskPayload.input || taskRequest.task?.input || {};
+        const config = taskPayload.config || taskRequest.task?.config || {};
         // Build tool request
         const tool = {
-            id: taskRequest.messageId || this.generateId(),
+            id: this.generateMessageId(),
             type: 'request',
             paradigm: protocols_1.ProtocolParadigm.TOOL_CENTRIC,
             timestamp: Date.now(),
             payload: {
-                toolId: intent.target.identifier || taskRequest.task?.taskType,
-                toolName: taskRequest.task?.taskType || intent.target.identifier || 'unknown',
-                arguments: taskRequest.task?.input || {},
+                toolId: `tool-${taskType}`,
+                toolName: taskType || intent.target.identifier || 'unknown',
+                arguments: {
+                    // Flatten task input structure to tool arguments
+                    ...input,
+                    // Remove task-specific wrappers
+                    ...(input.criteria || {}),
+                    ...(input.filters || {}),
+                    ...(input.pagination || {})
+                },
                 options: {
-                    timeout: taskRequest.task?.config?.timeout,
+                    timeout: config.timeout,
                     retries: 3
                 }
+            },
+            metadata: {
+                sourceTaskId: taskRequest.id,
+                sessionId: taskPayload.context?.conversationId,
+                priority: config.priority || 'normal'
             }
         };
         // Calculate confidence
@@ -331,6 +359,35 @@ class SemanticMapper {
         }
     }
     /**
+     * Infer source from tool name
+     */
+    inferSourceFromTool(toolName) {
+        if (!toolName)
+            return 'unknown';
+        const sourceMap = {
+            'database': 'database',
+            'db': 'database',
+            'query': 'database',
+            'api': 'api',
+            'rest': 'api',
+            'http': 'api',
+            'file': 'filesystem',
+            'fs': 'filesystem',
+            'text': 'text',
+            'analyze': 'analytics',
+            'search': 'search',
+            'cache': 'cache',
+            'storage': 'storage'
+        };
+        const toolNameLower = toolName.toLowerCase();
+        for (const [key, source] of Object.entries(sourceMap)) {
+            if (toolNameLower.includes(key)) {
+                return source;
+            }
+        }
+        return 'service';
+    }
+    /**
      * Infer action from task type
      */
     inferAction(taskType) {
@@ -448,12 +505,6 @@ class SemanticMapper {
      */
     generateMessageId() {
         return `msg_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
-    }
-    /**
-     * Generate unique ID
-     */
-    generateId() {
-        return `${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
     }
 }
 exports.SemanticMapper = SemanticMapper;

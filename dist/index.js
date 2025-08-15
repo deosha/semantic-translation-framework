@@ -180,21 +180,26 @@ class TaskCentricAdapter {
     }
     extractIntent(message) {
         const payload = message.payload;
+        // Handle both direct payload structure and nested task structure
+        const taskType = payload.taskType || payload.task?.taskType;
+        const input = payload.input || payload.task?.input || {};
+        const config = payload.config || payload.task?.config || {};
+        const context = payload.context || {};
         return {
             action: 'process',
             target: {
                 type: 'task',
-                identifier: payload.task?.taskType,
-                description: payload.task?.description
+                identifier: taskType,
+                description: payload.description || payload.task?.description
             },
-            parameters: payload.task?.input || {},
+            parameters: input,
             constraints: {
-                timeout: payload.task?.config?.timeout,
-                priority: payload.task?.config?.priority
+                timeout: config.timeout,
+                priority: config.priority
             },
             context: {
-                session: payload.context?.sessionId,
-                conversation: payload.context?.conversationId
+                session: context.sessionId || message.sessionId,
+                conversation: context.conversationId
             }
         };
     }
@@ -225,7 +230,9 @@ class TaskCentricAdapter {
         };
     }
     validateMessage(message) {
-        return !!(message.payload && message.payload.task && message.payload.task.taskType);
+        const payload = message.payload;
+        // Check for either direct taskType or nested task.taskType
+        return !!(payload && (payload.taskType || (payload.task && payload.task.taskType)));
     }
     getMetadata() {
         return {

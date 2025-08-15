@@ -115,7 +115,7 @@ export class SemanticMapper {
     // Extract semantic intent
     const intent = this.extractToolCentricIntent(toolRequest);
     
-    // Build task request
+    // Build task request with proper task-centric structure
     const task: TaskRequest = {
       id: this.generateMessageId(),
       type: 'request',
@@ -123,12 +123,23 @@ export class SemanticMapper {
       timestamp: Date.now(),
       payload: {
         taskType: intent.target.identifier || toolRequest.payload.toolName,
-        input: intent.parameters,
+        input: {
+          // Map tool arguments to task input structure
+          ...intent.parameters,
+          source: this.inferSourceFromTool(toolRequest.payload.toolName),
+          options: toolRequest.payload.options || {}
+        },
         context: {
           conversationId: context.sessionId,
-          sessionVariables: context.conversationContext?.variables
+          sessionVariables: context.conversationContext?.variables || {}
+        },
+        config: {
+          timeout: toolRequest.payload.options?.timeout,
+          priority: 'normal',
+          streaming: false
         }
-      }
+      },
+      sessionId: context.sessionId
     };
 
     // Calculate confidence
@@ -155,20 +166,38 @@ export class SemanticMapper {
     // Extract semantic intent
     const intent = this.extractTaskCentricIntent(taskRequest);
     
+    // Extract from payload structure
+    const taskPayload = taskRequest.payload || (taskRequest as any);
+    const taskType = taskPayload.taskType || (taskRequest as any).task?.taskType;
+    const input = taskPayload.input || (taskRequest as any).task?.input || {};
+    const config = taskPayload.config || (taskRequest as any).task?.config || {};
+    
     // Build tool request
     const tool: ToolInvocationRequest = {
-      id: (taskRequest as any).messageId || this.generateId(),
+      id: this.generateMessageId(),
       type: 'request',
       paradigm: ProtocolParadigm.TOOL_CENTRIC,
       timestamp: Date.now(),
       payload: {
-        toolId: intent.target.identifier || (taskRequest as any).task?.taskType,
-        toolName: (taskRequest as any).task?.taskType || intent.target.identifier || 'unknown',
-        arguments: (taskRequest as any).task?.input || {},
+        toolId: `tool-${taskType}`,
+        toolName: taskType || intent.target.identifier || 'unknown',
+        arguments: {
+          // Flatten task input structure to tool arguments
+          ...input,
+          // Remove task-specific wrappers
+          ...(input.criteria || {}),
+          ...(input.filters || {}),
+          ...(input.pagination || {})
+        },
         options: {
-          timeout: (taskRequest as any).task?.config?.timeout,
+          timeout: config.timeout,
           retries: 3
         }
+      },
+      metadata: {
+        sourceTaskId: taskRequest.id,
+        sessionId: taskPayload.context?.conversationId,
+        priority: config.priority || 'normal'
       }
     };
 
@@ -403,6 +432,38 @@ export class SemanticMapper {
   }
 
   /**
+   * Infer source from tool name
+   */
+  private inferSourceFromTool(toolName?: string): string {
+    if (!toolName) return 'unknown';
+    
+    const sourceMap: Record<string, string> = {
+      'database': 'database',
+      'db': 'database',
+      'query': 'database',
+      'api': 'api',
+      'rest': 'api',
+      'http': 'api',
+      'file': 'filesystem',
+      'fs': 'filesystem',
+      'text': 'text',
+      'analyze': 'analytics',
+      'search': 'search',
+      'cache': 'cache',
+      'storage': 'storage'
+    };
+    
+    const toolNameLower = toolName.toLowerCase();
+    for (const [key, source] of Object.entries(sourceMap)) {
+      if (toolNameLower.includes(key)) {
+        return source;
+      }
+    }
+    
+    return 'service';
+  }
+  
+  /**
    * Infer action from task type
    */
   private inferAction(taskType: string): SemanticIntent['action'] {
@@ -550,10 +611,4 @@ export class SemanticMapper {
     return `msg_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
   }
 
-  /**
-   * Generate unique ID
-   */
-  private generateId(): string | number {
-    return `${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
-  }
 }
