@@ -12,7 +12,7 @@ This implementation is based on the research paper:
 > **"Semantic Protocol Translation for AI Agent Interoperability: A High-Performance Framework with Confidence Scoring"**  
 > Deo Shankar, Tiger Analytics  
 > 
-> 📄 **[Read on Overleaf](https://www.overleaf.com/read/dbmhsfngzcrd#a0ad01)** | [Local Markdown](RESEARCH_PAPER_IEEE_TYPESCRIPT.md)
+> 📄 **[Read on Overleaf](https://www.overleaf.com/read/dbmhsfngzcrd#a0ad01)**
 
 ## 🎯 Overview
 
